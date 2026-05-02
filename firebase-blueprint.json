@@ -1,0 +1,61 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile information",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "name": { "type": "string" },
+        "email": { "type": "string" },
+        "preferredLanguage": { "type": "string" },
+        "location": { "type": "string" },
+        "role": { "type": "string", "enum": ["user", "admin"] }
+      },
+      "required": ["uid", "email"]
+    },
+    "Report": {
+      "title": "Report",
+      "description": "Pest and disease detection report",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "imageUrl": { "type": "string" },
+        "detectionResult": { "type": "string" },
+        "confidence": { "type": "number" },
+        "treatment": { "type": "string" },
+        "weatherContext": { "type": "object" },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "cropType": { "type": "string" }
+      },
+      "required": ["userId", "imageUrl", "detectionResult", "timestamp"]
+    },
+    "ChatMessage": {
+      "title": "ChatMessage",
+      "description": "Chat message in a conversation",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "role": { "type": "string", "enum": ["user", "model"] },
+        "text": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "role", "text", "timestamp"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User profiles"
+    },
+    "/reports/{reportId}": {
+      "schema": "Report",
+      "description": "Detection reports"
+    },
+    "/chats/{chatId}": {
+      "schema": "ChatMessage",
+      "description": "Chat history"
+    }
+  }
+}

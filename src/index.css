@@ -1,0 +1,106 @@
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&display=swap');
+@import "tailwindcss";
+@plugin "@tailwindcss/typography";
+
+@theme {
+  --font-sans: "Outfit", ui-sans-serif, system-ui, sans-serif;
+  
+  --color-bg: #f8faf8;
+  --color-card-bg: #ffffff;
+  --color-primary: #1b4332;
+  --color-accent: #d97706;
+  --color-text: #064e3b;
+  --color-muted: #6b7280;
+  --color-border: #e5e7eb;
+  --color-success: #059669;
+  --color-error: #dc2626;
+}
+
+@layer base {
+  body {
+    @apply bg-bg text-text font-sans antialiased;
+  }
+}
+
+.bento-grid {
+  @apply grid grid-cols-1 md:grid-cols-2 lg:grid-cols-12 gap-5;
+  grid-auto-rows: minmax(140px, auto);
+}
+
+.bento-card {
+  @apply bg-card-bg rounded-[24px] border border-border p-5 md:p-6 shadow-[0_8px_30px_rgba(0,0,0,0.04)] flex flex-col transition-all hover:shadow-[0_8px_30px_rgba(0,0,0,0.08)];
+}
+
+.dashboard-container {
+  @apply w-full max-w-[1400px] mx-auto;
+}
+
+.card-title {
+  @apply text-[1.1rem] font-bold text-primary mb-4 flex justify-between items-center;
+}
+
+.bubble {
+  @apply px-4 py-3 rounded-[18px] text-[1rem] max-w-[85%] leading-relaxed;
+}
+
+.bubble-bot {
+  @apply bg-[#f0fdf4] self-start text-text rounded-bl-none border border-[#dcfce7];
+}
+
+.bubble-user {
+  @apply bg-primary text-white self-end rounded-br-none shadow-sm;
+}
+
+.badge {
+  @apply px-3 py-1 rounded-full text-[0.75rem] font-bold uppercase tracking-wide;
+}
+
+.btn-bento {
+  @apply bg-primary text-white px-6 py-3 rounded-xl font-bold transition-all hover:opacity-95 active:scale-95 shadow-md flex items-center justify-center gap-2;
+}
+
+.sidebar-item {
+  @apply flex items-center gap-4 px-4 py-3 rounded-xl transition-all cursor-pointer font-medium text-muted hover:bg-[#f0fdf4] hover:text-primary;
+}
+
+.sidebar-item-active {
+  @apply bg-primary text-white hover:bg-primary hover:text-white shadow-md;
+}
+
+.farmer-input {
+  @apply bg-[#f3f4f6] border-2 border-transparent focus:border-primary focus:bg-white rounded-xl px-4 py-3 text-[1rem] outline-none transition-all;
+}
+
+.chip {
+  @apply px-4 py-2 rounded-full border border-border bg-white text-sm font-medium text-muted hover:border-primary hover:text-primary hover:bg-[#f0fdf4] transition-all whitespace-nowrap cursor-pointer;
+}
+
+@layer utilities {
+  .custom-scrollbar::-webkit-scrollbar {
+    width: 6px;
+  }
+  .custom-scrollbar::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .custom-scrollbar::-webkit-scrollbar-thumb {
+    background: #1b433220;
+    border-radius: 10px;
+  }
+  .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+    background: #1b433240;
+  }
+}
+
+.pulse {
+  animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: .5;
+  }
+}
+

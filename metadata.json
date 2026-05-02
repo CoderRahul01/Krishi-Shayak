@@ -1,0 +1,6 @@
+{
+  "name": "Krishi Shayak: Smart Agriculture Assistant",
+  "description": "Advanced AI-powered agricultural system for pest and disease detection, featuring multilingual chatbot support, weather integration, and treatment suggestions.",
+  "requestFramePermissions": ["camera", "microphone", "geolocation"],
+  "majorCapabilities": ["vision", "chat", "multilingual", "weather"]
+}
