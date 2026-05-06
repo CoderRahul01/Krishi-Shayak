@@ -41,6 +41,7 @@ import {
 import { useFirebase } from './components/FirebaseProvider';
 import { analyzePlantImage, chatWithExpert, enhanceImageQuality, getAIPoweredWeather } from './services/geminiService';
 import { transliterateDevanagari } from './lib/transliterator';
+import { compressImage } from './lib/utils';
 // import { fetchWeather, WeatherData, fetchWeatherByCity } from './services/weatherService';
 import ReactMarkdown from 'react-markdown';
 import { collection, addDoc, query, where, orderBy, onSnapshot, Timestamp, getDocFromServer, doc, deleteDoc } from 'firebase/firestore';
@@ -789,7 +790,7 @@ export default function App() {
     setIsCameraActive(false);
   };
 
-  const capturePhoto = () => {
+  const capturePhoto = async () => {
     if (videoRef.current && canvasRef.current) {
       const video = videoRef.current;
       const canvas = canvasRef.current;
@@ -800,7 +801,8 @@ export default function App() {
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
         const dataUrl = canvas.toDataURL('image/jpeg');
         stopCamera();
-        handleBase64ImageAnalysis(dataUrl);
+        const compressedUrl = await compressImage(dataUrl);
+        handleBase64ImageAnalysis(compressedUrl);
       }
     }
   };
@@ -860,8 +862,9 @@ export default function App() {
 
     setChatFile(file);
     const reader = new FileReader();
-    reader.onloadend = () => {
-      setChatFilePreview(reader.result as string);
+    reader.onloadend = async () => {
+      const compressedUrl = await compressImage(reader.result as string);
+      setChatFilePreview(compressedUrl);
     };
     reader.readAsDataURL(file);
   };
@@ -983,8 +986,9 @@ export default function App() {
     if (!file || !user) return;
 
     const reader = new FileReader();
-    reader.onloadend = () => {
-      handleBase64ImageAnalysis(reader.result as string);
+    reader.onloadend = async () => {
+      const compressedUrl = await compressImage(reader.result as string);
+      handleBase64ImageAnalysis(compressedUrl);
     };
     reader.readAsDataURL(file);
   };
