@@ -35,12 +35,13 @@ import {
   Paperclip,
   Send,
   VolumeX,
-  Search
+  Search,
+  CloudRain
 } from 'lucide-react';
 import { useFirebase } from './components/FirebaseProvider';
-import { analyzePlantImage, chatWithExpert, enhanceImageQuality } from './services/geminiService';
+import { analyzePlantImage, chatWithExpert, enhanceImageQuality, getAIPoweredWeather } from './services/geminiService';
 import { transliterateDevanagari } from './lib/transliterator';
-import { fetchWeather, WeatherData, fetchWeatherByCity } from './services/weatherService';
+// import { fetchWeather, WeatherData, fetchWeatherByCity } from './services/weatherService';
 import ReactMarkdown from 'react-markdown';
 import { collection, addDoc, query, where, orderBy, onSnapshot, Timestamp, getDocFromServer, doc, deleteDoc } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from './lib/firebase';
@@ -111,6 +112,22 @@ const POPULAR_CITIES = [
   "Chennai", "Kolkata", "Lucknow", "Indore"
 ];
 
+interface WeatherData {
+  temp: number;
+  condition: string;
+  humidity: number;
+  windSpeed: number;
+  locationName: string;
+  riskLevel: 'Low' | 'Medium' | 'High';
+  farmingSuggestion: string;
+  irrigationAdvice: string;
+  sprayingAlert: string;
+  lat?: number;
+  lon?: number;
+  feelsLike?: number;
+  diseaseRisk?: string;
+}
+
 export default function App() {
   const { user, loading, login, logout } = useFirebase();
   const [activeTab, setActiveTab] = useState<Tab>('dashboard');
@@ -126,7 +143,7 @@ export default function App() {
   const [isMicEnabled, setIsMicEnabled] = useState(true);
   const [isWeatherAutoUpdate, setIsWeatherAutoUpdate] = useState(true);
   const [locationMode, setLocationMode] = useState<'auto' | 'manual'>('auto');
-  const [manualLocation, setManualLocation] = useState('Maharashtra, India');
+  const [manualLocation, setManualLocation] = useState('Central India');
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isCameraActive, setIsCameraActive] = useState(false);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
@@ -134,6 +151,8 @@ export default function App() {
   const [chatFile, setChatFile] = useState<File | null>(null);
   const [chatFilePreview, setChatFilePreview] = useState<string | null>(null);
   const [isUploadingChatFile, setIsUploadingChatFile] = useState(false);
+  const [lastSpeakableText, setLastSpeakableText] = useState<string>("");
+  const [isOnboarded, setIsOnboarded] = useState(true); // Default true for now, will check in useEffect
   const currentUtteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
 
   useEffect(() => {
@@ -141,6 +160,9 @@ export default function App() {
     const handleVoicesChanged = () => {
       window.speechSynthesis.getVoices();
     };
+
+    const storedOnboard = localStorage.getItem(`onboarded_${user?.uid}`);
+    if (!storedOnboard && user) setIsOnboarded(false);
 
     if ('speechSynthesis' in window) {
       window.speechSynthesis.getVoices();
@@ -152,16 +174,27 @@ export default function App() {
         window.speechSynthesis.onvoiceschanged = null;
       }
     };
-  }, []);
+  }, [user]);
 
-  const loadWeather = async (lat: number, lon: number, nameOverride?: string) => {
+  const [locationError, setLocationError] = useState<string | null>(null);
+
+  const loadWeather = async (locNameOrCoords?: string) => {
     setIsRefreshingWeather(true);
+    const locationToFetch = locNameOrCoords || manualLocation || 'Nagpur, India';
+    console.log(`[App] Loading AI weather insights for: ${locationToFetch}`);
     try {
-      const data = await fetchWeather(lat, lon, language, nameOverride);
+      const data = await getAIPoweredWeather(locationToFetch, language);
+      console.log("[App] AI Weather data received:", data);
       setWeather(data);
       setLastUpdated(new Date());
-    } catch (error) {
-      console.error("Weather load failed:", error);
+      setLocationError(null);
+      if (data) {
+        const weatherSummary = `${t.fieldWeather} for ${data.locationName}. ${data.temp}°C. ${data.condition}. ${t.diseaseRisk}: ${data.riskLevel}. ${data.farmingSuggestion}`;
+        setLastSpeakableText(weatherSummary);
+      }
+    } catch (error: any) {
+      console.error("[App] Weather load failed:", error);
+      setLocationError("Unable to fetch weather insights at this moment.");
     } finally {
       setIsRefreshingWeather(false);
     }
@@ -221,7 +254,14 @@ export default function App() {
       refresh: "Refresh",
       yourFarm: "Your Farm",
       delete: "Delete",
-      chatSuggestions: ["Pest Control", "Best Fertilizer", "Irrigation Tips", "Crop Rotation"]
+      accuracy: "Accuracy",
+      atScan: "@ Scan",
+      chatSuggestions: ["Pest Control", "Best Fertilizer", "Irrigation Tips", "Crop Rotation"],
+      welcome: "Welcome to Krishi Shayak",
+      onboarding1: "Identify plant diseases instantly with your camera.",
+      onboarding2: "Get real-time weather and smart hints for your farm.",
+      onboarding3: "Chat with Krishi Bot for expert agricultural advice.",
+      getStarted: "Get Started"
     },
     hi: {
       appTitle: "कृषि सहायक",
@@ -275,7 +315,14 @@ export default function App() {
       lastUpdated: "पिछला अपडेट",
       refresh: "रिफ्रेश",
       delete: "हटाएं",
-      chatSuggestions: ["कीट नियंत्रण", "सर्वश्रेष्ठ उर्वरक", "सिंचाई युक्तियाँ", "फसल चक्रण"]
+      accuracy: "सटीकता",
+      atScan: "स्कैन के समय",
+      chatSuggestions: ["कीट नियंत्रण", "सर्वश्रेष्ठ उर्वरक", "सिंचाई युक्तियाँ", "फसल चक्रण"],
+      welcome: "कृषि सहायक में आपका स्वागत है",
+      onboarding1: "अपने कैमरे से तुरंत पौधों की बीमारियों की पहचान करें।",
+      onboarding2: "अपने खेत के लिए वास्तविक समय के मौसम और स्मार्ट संकेत प्राप्त करें।",
+      onboarding3: "विशेषज्ञ कृषि सलाह के लिए कृषि बॉट के साथ चैट करें।",
+      getStarted: "शुरू करें"
     },
     mr: {
       appTitle: "कृषि सहायक",
@@ -383,6 +430,8 @@ export default function App() {
       lastUpdated: "చివరిసారిగా అప్‌డేట్ చేయబడింది",
       refresh: "రిఫ్రెష్",
       delete: "తొలగించు",
+      accuracy: "ఖచ్చితత్వం",
+      atScan: "స్కాన్ వద్ద",
       chatSuggestions: ["తెగుళ్ల నివారణ", "ఉత్తమ ఎరువులు", "నీటిపారుదల చిట్కాలు", "పంట మార్పిడి"]
     },
     ta: {
@@ -784,7 +833,9 @@ export default function App() {
       });
 
       if (result.issueDetected && result.explanation) {
-        speak(`${result.plantName}. ${result.issueDetected}. ${result.explanation}`);
+        const textToSpeak = `${result.plantName}. ${result.issueDetected}. ${result.explanation}. ${t.organicTreatment}: ${result.treatments.organic}. ${t.chemicalTreatment}: ${result.treatments.chemical}.`;
+        setLastSpeakableText(textToSpeak);
+        speak(textToSpeak);
       }
     } catch (error) {
       console.error("Analysis error:", error);
@@ -863,32 +914,29 @@ export default function App() {
 
         if (locationMode === 'manual') {
           if (manualLocation) {
-            try {
-              const data = await fetchWeatherByCity(manualLocation, language);
-              setWeather(data);
-              setLastUpdated(new Date());
-            } catch (e) {
-              loadWeather(20.5937, 78.9629, manualLocation);
-            }
-          } else {
-            loadWeather(20.5937, 78.9629, 'Nagpur');
+            loadWeather(manualLocation);
           }
           return;
         }
 
         if (navigator.geolocation) {
           navigator.geolocation.getCurrentPosition(
-            (pos) => loadWeather(pos.coords.latitude, pos.coords.longitude),
-            () => loadWeather(20.5937, 78.9629, 'Nagpur'),
-            { enableHighAccuracy: true, timeout: 8000, maximumAge: 60000 }
+            (pos) => {
+              const { latitude, longitude } = pos.coords;
+              loadWeather(`${latitude}, ${longitude}`);
+            },
+            () => {
+              loadWeather(manualLocation);
+            },
+            { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 }
           );
         } else {
-          loadWeather(20.5937, 78.9629, 'Nagpur');
+          loadWeather(manualLocation);
         }
       };
 
       getLocationAndWeather();
-      const refreshInterval = setInterval(getLocationAndWeather, 30 * 60 * 1000);
+      const refreshInterval = setInterval(getLocationAndWeather, 15 * 60 * 1000); 
 
       const q = query(
         collection(db, 'reports'),
@@ -924,28 +972,10 @@ export default function App() {
     const cityToSearch = cityOverride || manualLocation;
     if (!cityToSearch.trim()) return;
     
-    if (cityOverride) {
-      setManualLocation(cityOverride);
-    }
+    if (cityOverride) setManualLocation(cityOverride);
     setLocationMode('manual');
-    setIsRefreshingWeather(true);
-
-    try {
-      const data = await fetchWeatherByCity(cityToSearch, language);
-      // Force the locationName to be the searched city if the API doesn't provide a good one
-      const finalizedData = {
-        ...data,
-        locationName: cityToSearch.charAt(0).toUpperCase() + cityToSearch.slice(1)
-      };
-      setWeather(finalizedData);
-      setLastUpdated(new Date());
-      // Switch to dashboard to show the results
-      setTimeout(() => setActiveTab('dashboard'), 500);
-    } catch (error) {
-      console.error("Manual weather fetch failed handling:", error);
-    } finally {
-      setIsRefreshingWeather(false);
-    }
+    loadWeather(cityToSearch);
+    setTimeout(() => setActiveTab('dashboard'), 500);
   };
 
   const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -998,6 +1028,7 @@ export default function App() {
     try {
       const response = await chatWithExpert(currentMessages, messageText, language, imageToSend);
       setChatMessages([...newMessages, { role: 'model' as const, text: response }]);
+      setLastSpeakableText(response);
       speak(response);
     } catch (error) {
       alert("Failed to send message.");
@@ -1007,8 +1038,14 @@ export default function App() {
   const speak = (text: string, force: boolean = false) => {
     if (!('speechSynthesis' in window)) return;
     
+    // If text is provided, update the last speakable text
+    if (text) setLastSpeakableText(text);
+    
     window.speechSynthesis.cancel();
     if (!isVoiceEnabled && !force) return;
+    
+    const textToRead = text || lastSpeakableText;
+    if (!textToRead) return;
     
     const voiceLangs: Record<string, string> = {
       hi: 'hi-IN', mr: 'mr-IN', te: 'te-IN', ta: 'ta-IN',
@@ -1018,13 +1055,15 @@ export default function App() {
     
     const targetLang = voiceLangs[language] || 'en-IN';
     const allVoices = window.speechSynthesis.getVoices();
-    const matchedVoices = allVoices.filter(v => v.lang === targetLang || v.lang.startsWith(language));
+    
+    // Prioritize natural sounding voices for Hindi
+    const matchedVoices = allVoices.filter(v => v.lang === targetLang || v.lang.replace('_', '-').startsWith(language));
     
     // Check if we have a real regional voice
     const hasLocalVoice = matchedVoices.length > 0;
     
     // Prepare text: Transliterate ONLY if we DON'T have a local voice and it's a Devanagari language
-    const cleanText = prepareTextForSpeech(text, language, !hasLocalVoice);
+    const cleanText = prepareTextForSpeech(textToRead, language, !hasLocalVoice);
     if (!cleanText) return;
 
     const utterance = new SpeechSynthesisUtterance(cleanText);
@@ -1032,23 +1071,18 @@ export default function App() {
     if (hasLocalVoice) {
       // Use regional voice
       utterance.lang = targetLang;
-      let selectedVoice = matchedVoices.find(v => v.lang === targetLang && v.name.includes('Google')) ||
-                         matchedVoices.find(v => v.lang === targetLang && v.name.includes('Microsoft')) ||
+      // Preference order: Google (very natural), then Microsoft/Premium, then any matched
+      let selectedVoice = matchedVoices.find(v => v.name.includes('Google') && v.lang.startsWith('hi')) ||
+                         matchedVoices.find(v => v.name.includes('Google') && v.lang.startsWith(language)) ||
+                         matchedVoices.find(v => v.name.includes('Natural')) ||
                          matchedVoices.find(v => v.lang === targetLang) ||
                          matchedVoices[0];
       if (selectedVoice) utterance.voice = selectedVoice;
-    } else {
-      // Fallback to English voice for transliterated text
-      utterance.lang = 'en-IN';
-      const englishVoices = allVoices.filter(v => v.lang.startsWith('en'));
-      let selectedVoice = englishVoices.find(v => v.lang === 'en-IN' && v.name.includes('Google')) ||
-                         englishVoices.find(v => v.lang === 'en-IN') ||
-                         englishVoices[0];
-      if (selectedVoice) utterance.voice = selectedVoice;
     }
 
-    utterance.rate = language === 'en' ? 1.0 : 0.85; // Slightly slower for transliterated clarity
-    utterance.pitch = 1.0;
+    // Natural tone adjustments
+    utterance.rate = language === 'hi' ? 0.9 : 1.0; 
+    utterance.pitch = 1.05; // Slightly warmer pitch
     
     utterance.onstart = () => setIsSpeaking(true);
     utterance.onend = () => setIsSpeaking(false);
@@ -1062,14 +1096,22 @@ export default function App() {
   };
 
   const toggleVoice = () => {
-    const newState = !isVoiceEnabled;
-    setIsVoiceEnabled(newState);
-    if (!newState) window.speechSynthesis.cancel();
+    if (isSpeaking) {
+      window.speechSynthesis.cancel();
+      setIsSpeaking(false);
+    } else if (lastSpeakableText) {
+      speak(lastSpeakableText, true);
+    } else {
+      // Fallback: speak hello or current context
+      const welcome = t.helloFarmer;
+      speak(welcome, true);
+    }
   };
 
   const speakWeatherInsights = () => {
     if (!weather) return;
-    const weatherText = `${t.fieldWeather} for ${weather.locationName}. ${weather.temp} degrees. ${weather.condition}. ${t.diseaseRisk}: ${weather.diseaseRisk}.`;
+    const weatherText = `${t.fieldWeather} for ${weather.locationName}. ${weather.temp} degrees. ${weather.condition}. ${t.diseaseRisk}: ${weather.riskLevel}.`;
+    setLastSpeakableText(weatherText);
     speak(weatherText, true);
   };
 
@@ -1223,7 +1265,13 @@ export default function App() {
                <div className="w-2 h-2 rounded-full bg-success animate-pulse"></div>
                <span className="text-[0.7rem] font-black text-primary uppercase tracking-wide">{t.online}</span>
             </div>
-            <button onClick={toggleVoice} className={`p-2.5 rounded-xl transition-all hover:scale-105 active:scale-95 ${isVoiceEnabled ? 'bg-primary text-white shadow-lg shadow-primary/20' : 'bg-white text-muted border border-border shadow-sm'}`}>{isVoiceEnabled ? <Volume2 className="w-5 h-5" /> : <VolumeX className="w-5 h-5" />}</button>
+            <button 
+              onClick={toggleVoice} 
+              className={`p-2.5 rounded-xl transition-all hover:scale-105 active:scale-95 ${isSpeaking ? 'bg-error text-white shadow-lg shadow-error/20' : 'bg-primary text-white shadow-lg shadow-primary/20'}`}
+              title={isSpeaking ? "Stop Speaking" : "Read Aloud"}
+            >
+              {isSpeaking ? <VolumeX className="w-5 h-5" /> : <Volume2 className="w-5 h-5" />}
+            </button>
             <div className="relative">
               <select value={language} onChange={(e) => setLanguage(e.target.value)} className="appearance-none bg-white border border-border rounded-xl pl-3 pr-8 py-2.5 text-xs font-black text-primary hover:border-primary/40 transition-all outline-none cursor-pointer shadow-sm">
                 <option value="en">English</option>
@@ -1250,7 +1298,7 @@ export default function App() {
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -20 }}
-                className="dashboard-container bento-grid"
+                className="dashboard-container bento-grid max-w-7xl mx-auto"
               >
                 {/* Weather Card */}
                 <div className="bento-card col-span-12 md:col-span-12 lg:col-span-8 row-span-4 lg:row-span-8 flex flex-col">
@@ -1261,7 +1309,13 @@ export default function App() {
                       </div>
                       <div>
                         <h2 className="text-2xl font-black text-primary tracking-tight">{t.fieldWeather}</h2>
-                        <p className="text-xs text-muted font-bold uppercase tracking-widest flex items-center gap-1.5">
+                        {locationError && (
+                          <div className="bg-red-50 text-red-600 text-[0.6rem] font-bold px-2 py-0.5 rounded-lg border border-red-100 flex items-center gap-1 mt-1">
+                            <AlertTriangle className="w-3 h-3" />
+                            {locationError}
+                          </div>
+                        )}
+                        <p className="text-xs text-muted font-bold uppercase tracking-widest flex items-center gap-1.5 mt-1">
                           <MapPin className="w-3 h-3 text-accent" />
                           {isRefreshingWeather ? (
                             <span className="flex items-center gap-1">
@@ -1283,16 +1337,25 @@ export default function App() {
                     <div className="flex gap-2">
                       <button 
                         onClick={() => {
+                          if (locationMode === 'manual') {
+                            loadWeather(manualLocation);
+                            return;
+                          }
+                          
                           if (navigator.geolocation) {
                             setIsRefreshingWeather(true);
                             navigator.geolocation.getCurrentPosition(
-                              (pos) => loadWeather(pos.coords.latitude, pos.coords.longitude),
-                              () => {
+                              (pos) => {
+                                loadWeather(`${pos.coords.latitude}, ${pos.coords.longitude}`);
+                              },
+                              (err) => {
                                 setIsRefreshingWeather(false);
-                                alert("Location access denied.");
+                                setLocationError(err.code === 1 ? "Location access denied." : "Location request timed out.");
                               },
                               { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
                             );
+                          } else {
+                            setLocationError("Geolocation not supported.");
                           }
                         }}
                         className={`p-3 bg-[#f0fdf4] text-primary rounded-xl hover:bg-primary hover:text-white transition-all shadow-sm ${isRefreshingWeather ? 'animate-spin' : ''}`}
@@ -1300,13 +1363,6 @@ export default function App() {
                         disabled={isRefreshingWeather}
                       >
                         <RefreshCcw className="w-5 h-5" />
-                      </button>
-                      <button 
-                        onClick={speakWeatherInsights}
-                        className="p-3 bg-[#f0fdf4] text-primary rounded-xl hover:bg-primary hover:text-white transition-all shadow-sm"
-                        title={t.listenToInsights}
-                      >
-                        <Volume2 className="w-5 h-5" />
                       </button>
                     </div>
                   </div>
@@ -1449,7 +1505,7 @@ export default function App() {
                     </button>
                   </div>
                   
-                  <div className="flex-1 flex flex-col gap-4 overflow-y-auto max-h-[350px] pr-2 custom-scrollbar p-1">
+                  <div className="flex-1 flex flex-col gap-4 overflow-y-auto pr-2 custom-scrollbar p-1">
                     {chatMessages.length === 0 ? (
                       <div className="p-5 bg-[#f0fdf4] rounded-2xl border border-primary/10 text-[0.9rem] font-bold text-primary leading-relaxed">
                         {t.helloFarmer}
@@ -1503,28 +1559,87 @@ export default function App() {
                     </button>
                   </div>
                   
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 flex-1 overflow-y-auto custom-scrollbar pr-1 pb-4">
-                    {history.slice(0, 3).map((report) => (
-                      <div key={report.id} className="group p-4 bg-white border border-border/50 rounded-3xl hover:border-primary/30 transition-all shadow-sm flex flex-col gap-3">
-                        <div className="flex gap-3 items-center">
-                          <div className="relative w-12 h-12 rounded-xl overflow-hidden shrink-0 border border-border/20">
-                             <img src={report.imageUrl} className="w-full h-full object-cover bg-bg" alt="Report" referrerPolicy="no-referrer" />
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 flex-1 overflow-y-auto custom-scrollbar pr-1 pb-4">
+                      {history.slice(0, 6).map((report) => (
+                        <div key={report.id} className="group p-5 bg-white border border-border/50 rounded-[2.5rem] hover:border-primary/30 transition-all shadow-md flex flex-col gap-4 relative overflow-hidden h-full">
+                          <div className="flex gap-5 items-start">
+                            <div className="relative w-20 h-20 rounded-2xl overflow-hidden shrink-0 border border-border/20 shadow-inner">
+                               <img src={report.imageUrl} className="w-full h-full object-cover bg-bg transform group-hover:scale-110 transition-transform duration-500" alt="Report" referrerPolicy="no-referrer" />
+                               <div className="absolute inset-0 bg-black/5"></div>
+                            </div>
+                            <div className="flex-1 min-w-0 py-0.5">
+                              <div className="flex items-center justify-between mb-1">
+                                <div className="font-black text-primary text-[0.95rem] truncate leading-none">{report.plantName}</div>
+                                <button 
+                                  onClick={() => {
+                                    let text = `${report.plantName}. ${report.detectionResult}. ${report.explanation || ''}. `;
+                                    try {
+                                      const tr = typeof report.treatment === 'string' ? JSON.parse(report.treatment) : report.treatment;
+                                      if (tr) text += `${t.organicTreatment}: ${tr.organic}.`;
+                                    } catch(e) {}
+                                    speak(text, true);
+                                  }}
+                                  className="p-1.5 text-primary/40 hover:text-primary transition-colors"
+                                  title="Listen to report"
+                                >
+                                  <Volume2 className="w-4 h-4" />
+                                </button>
+                              </div>
+                              <div className="font-bold text-error text-[0.7rem] line-clamp-1 mb-1.5 uppercase tracking-tight">
+                                {report.detectionResult}
+                              </div>
+                              <div className="flex items-center gap-1.5 text-[0.6rem] text-muted font-bold tracking-tighter">
+                                <Clock className="w-2.5 h-2.5" />
+                                {report.timestamp?.seconds ? new Date(report.timestamp.seconds * 1000).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' }) : 'Recent'}
+                              </div>
+                            </div>
                           </div>
-                          <div className="flex-1 min-w-0">
-                            <div className="font-black text-primary text-[0.85rem] truncate leading-tight">{report.plantName}</div>
-                            <div className="text-[0.65rem] text-muted font-bold tracking-tighter">
-                              {new Date(report.timestamp?.seconds * 1000).toLocaleDateString()}
+                          
+                          {report.explanation && (
+                            <div className="bg-bg/40 p-3.5 rounded-2xl border border-border/20">
+                              <span className="text-[0.6rem] font-black text-primary/30 uppercase tracking-widest flex items-center gap-1 mb-1">
+                                <Info className="w-3 h-3" /> {t.diagnosis}
+                              </span>
+                              <p className="text-[0.75rem] text-text/80 leading-relaxed italic line-clamp-3">
+                                {report.explanation}
+                              </p>
+                            </div>
+                          )}
+  
+                          <div className="flex flex-col gap-3 mt-auto pt-4 border-t border-border/50">
+                            {report.treatment && (
+                              <div className="bg-emerald-50/30 p-3 rounded-2xl border border-emerald-100/40">
+                                 <span className="text-[0.6rem] font-black text-emerald-700/60 uppercase tracking-widest flex items-center gap-1 mb-1">
+                                    <Sprout className="w-3 h-3" /> {t.organicTreatment}
+                                 </span>
+                                 <p className="text-[0.75rem] text-emerald-900/90 line-clamp-2 leading-tight font-medium">
+                                   {(() => {
+                                      try {
+                                        const tr = typeof report.treatment === 'string' ? JSON.parse(report.treatment) : report.treatment;
+                                        return tr.organic;
+                                      } catch(e) { return "N/A"; }
+                                   })()}
+                                 </p>
+                               </div>
+                            )}
+                            
+                            <div className="flex items-center justify-between pt-1">
+                              <div className="flex items-center gap-2">
+                                <div className="flex items-center gap-1 bg-primary/5 px-2 py-1 rounded-lg">
+                                  <CheckCircle2 className="w-3 h-3 text-primary/60" />
+                                  <span className="text-[0.65rem] font-black text-primary/60 uppercase tracking-widest">{report.confidence}% Match</span>
+                                </div>
+                              </div>
+                              <button 
+                                onClick={() => setActiveTab('history')}
+                                className="p-1.5 bg-primary/10 text-primary rounded-xl hover:bg-primary hover:text-white transition-all shadow-sm"
+                              >
+                                 <ChevronRight className="w-4 h-4" />
+                              </button>
                             </div>
                           </div>
                         </div>
-                        <div className="flex items-center justify-between border-t border-border/20 pt-2 mt-auto">
-                          <span className={`text-[0.65rem] font-black tracking-widest p-1 px-2 rounded-lg uppercase ${report.detectionResult.toLowerCase().includes('pest') ? 'bg-emerald-50 text-emerald-600' : 'bg-orange-50 text-orange-600'}`}>
-                            {report.detectionResult.toLowerCase().includes('pest') ? 'Pest' : 'Disease'}
-                          </span>
-                          <span className="text-[0.7rem] font-black text-primary/60">{report.confidence}% Match</span>
-                        </div>
-                      </div>
-                    ))}
+                      ))}
                     {history.length === 0 && (
                       <div className="col-span-full h-full flex flex-col items-center justify-center text-muted italic font-bold gap-2 py-8">
                         <div className="w-12 h-12 bg-bg rounded-2xl flex items-center justify-center opacity-40">
@@ -1717,7 +1832,7 @@ export default function App() {
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.95 }}
-              className="dashboard-container flex-1 flex flex-col min-h-0 h-full"
+              className="dashboard-container flex-1 flex flex-col min-h-0 h-[calc(100vh-180px)] lg:h-[calc(100vh-140px)] max-w-7xl mx-auto w-full"
             >
               <div className="bento-card flex-1 flex flex-col p-0 overflow-hidden relative border-none sm:border border-border bg-white shadow-xl">
                 {/* Chat Header */}
@@ -1745,7 +1860,10 @@ export default function App() {
                       <Info className="w-5 h-5" />
                     </button>
                     <button 
-                      onClick={() => setChatMessages([])}
+                      onClick={() => {
+                        setChatMessages([]);
+                        setLastSpeakableText("");
+                      }}
                       className="p-2 hover:bg-bg rounded-xl text-muted transition-all hover:text-error"
                       title="Clear Chat"
                     >
@@ -1907,83 +2025,143 @@ export default function App() {
               key="history"
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
-              className="dashboard-container space-y-4"
+              className="dashboard-container max-w-7xl mx-auto"
             >
-              <h2 className="text-2xl font-bold mb-6 text-primary">{t.yourReports}</h2>
-              {history.map((report) => (
-                <div key={report.id} className="bento-card space-y-4">
-                  <div className="flex items-center gap-4">
-                    <img src={report.imageUrl} className="w-24 h-24 rounded-2xl object-cover bg-[#ddd]" alt="Report" referrerPolicy="no-referrer" />
-                    <div className="flex-1">
-                      <div className="flex items-center justify-between mb-1">
-                        <h3 className="font-bold text-xl">{report.plantName}</h3>
-                        <div className="flex flex-col items-end gap-1">
-                          <button 
-                            onClick={() => handleDeleteReport(report.id)}
-                            disabled={deletingReportId === report.id}
-                            className={`px-2 py-1.5 rounded-lg transition-all flex items-center gap-1 text-sm font-medium ${
-                              deletingReportId === report.id 
-                                ? 'text-muted/50 bg-muted/5' 
-                                : confirmDeleteId === report.id
-                                  ? 'bg-error text-white scale-105 shadow-lg shadow-error/20'
-                                  : 'text-muted hover:text-error hover:bg-error/10'
-                            }`}
-                            title={confirmDeleteId === report.id ? "Click again to confirm" : "Delete Report"}
-                          >
-                            {deletingReportId === report.id ? (
-                              <RefreshCcw className="w-4 h-4 animate-spin" />
-                            ) : confirmDeleteId === report.id ? (
-                              <>
-                                <CheckCircle2 className="w-4 h-4" />
-                                <span>Confirm?</span>
-                              </>
-                            ) : (
-                              <Trash2 className="w-4 h-4" />
-                            )}
-                          </button>
-                          <span className="text-[0.65rem] text-muted text-right">
-                            {new Date(report.timestamp?.seconds * 1000).toLocaleString()}
-                          </span>
-                        </div>
-                      </div>
-                      <p className="text-error font-bold mb-2">{report.detectionResult}</p>
-                      <div className="flex items-center gap-2">
-                        <div className="w-full bg-[#f0f4ef] h-2 rounded-full overflow-hidden">
-                          <div className="bg-primary h-full" style={{ width: `${report.confidence}%` }} />
-                        </div>
-                        <span className="text-xs font-bold text-primary">{report.confidence}%</span>
-                      </div>
-                    </div>
-                  </div>
-                  
-                  <div className="grid grid-cols-2 gap-4 pt-4 border-t border-border">
-                    <div className="text-sm">
-                      <span className="block text-muted font-semibold text-[0.7rem] uppercase tracking-wider mb-1">{t.organicTreatment}</span>
-                      <p className="text-text">
-                        {(() => {
-                          try {
-                            return typeof report.treatment === 'string' ? JSON.parse(report.treatment).organic : report.treatment?.organic;
-                          } catch (e) {
-                            return "No details available";
-                          }
-                        })()}
-                      </p>
-                    </div>
-                    <div className="text-sm">
-                      <span className="block text-muted font-semibold text-[0.7rem] uppercase tracking-wider mb-1">{t.chemicalTreatment}</span>
-                      <p className="text-text">
-                        {(() => {
-                          try {
-                            return typeof report.treatment === 'string' ? JSON.parse(report.treatment).chemical : report.treatment?.chemical;
-                          } catch (e) {
-                            return "No details available";
-                          }
-                        })()}
-                      </p>
-                    </div>
-                  </div>
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
+                <div>
+                   <h2 className="text-3xl lg:text-4xl font-black text-primary tracking-tight">{t.yourReports}</h2>
+                   <p className="text-muted text-sm font-bold mt-1">Review and manage your previous plant diagnostics</p>
                 </div>
-              ))}
+                <div className="text-sm font-black text-primary bg-primary/5 px-5 py-3 rounded-2xl border border-primary/10 shadow-sm flex items-center gap-2 self-start md:self-auto">
+                   <div className="w-2 h-2 rounded-full bg-primary animate-pulse"></div>
+                   {history.length} {t.pastReports}
+                </div>
+              </div>
+
+              {history.length === 0 ? (
+                <div className="bento-card items-center justify-center py-20 text-center opacity-40">
+                  <div className="w-20 h-20 bg-bg rounded-[2.5rem] flex items-center justify-center mb-6">
+                    <History className="w-10 h-10" />
+                  </div>
+                  <p className="text-xl font-bold">{t.noReports}</p>
+                </div>
+              ) : (
+                <div className="flex flex-col gap-6 max-w-4xl mx-auto">
+                  {history.map((report) => (
+                    <div key={report.id} className="bento-card p-0 overflow-hidden group hover:border-primary/30 transition-all flex flex-col md:flex-row shadow-xl bg-white border border-border/50 relative">
+                      <div className="relative w-full md:w-72 h-64 md:h-auto overflow-hidden shrink-0">
+                        <img src={report.imageUrl} className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110" alt="Report" referrerPolicy="no-referrer" />
+                        <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent"></div>
+                        <div className="absolute bottom-6 left-6 right-6">
+                           <div className="font-black text-white text-2xl leading-tight mb-2 truncate">{report.plantName}</div>
+                           <div className="flex items-center gap-3 text-white/90 text-sm font-bold">
+                             <Clock className="w-4 h-4" />
+                             {new Date(report.timestamp?.seconds * 1000).toLocaleDateString()}
+                           </div>
+                        </div>
+                      </div>
+
+                      <div className="flex-1 p-6 md:p-8 flex flex-col gap-6 relative">
+                        <div className="flex flex-wrap items-center justify-between gap-4">
+                           <div className="flex items-center gap-3">
+                             <span className="text-[0.7rem] font-black text-error uppercase tracking-[0.2em] bg-error/5 border border-error/10 px-3 py-1.5 rounded-xl">
+                               {report.detectionResult}
+                             </span>
+                             <div className="flex items-center gap-2 bg-primary/5 px-3 py-1.5 rounded-xl border border-primary/10">
+                               <CheckCircle2 className="w-4 h-4 text-primary" />
+                               <span className="text-sm font-black text-primary">{report.confidence}% Match</span>
+                             </div>
+                           </div>
+                           <div className="flex items-center gap-2">
+                              <button 
+                                onClick={() => {
+                                  let text = `${report.plantName}. ${report.detectionResult}. ${report.explanation || ''}. `;
+                                  try {
+                                    const tr = typeof report.treatment === 'string' ? JSON.parse(report.treatment) : report.treatment;
+                                    if (tr) text += `${t.organicTreatment}: ${tr.organic}. ${t.chemicalTreatment}: ${tr.chemical}.`;
+                                  } catch(e) {}
+                                  speak(text, true);
+                                }}
+                                className="w-10 h-10 bg-primary/5 text-primary rounded-xl flex items-center justify-center hover:bg-primary hover:text-white transition-all shadow-sm"
+                                title="Listen to report"
+                              >
+                                <Volume2 className="w-5 h-5" />
+                              </button>
+                              <button 
+                                onClick={() => handleDeleteReport(report.id)}
+                                className="w-10 h-10 bg-error/5 text-error rounded-xl flex items-center justify-center hover:bg-error hover:text-white transition-all shadow-sm"
+                                title="Delete update"
+                              >
+                                <Trash2 className="w-5 h-5" />
+                              </button>
+                           </div>
+                        </div>
+
+                        <div className="space-y-4">
+                          {report.explanation && (
+                            <div className="bg-bg/50 p-4 rounded-2xl border border-border/20">
+                              <span className="text-[0.65rem] font-black text-primary/40 uppercase tracking-[0.2em] flex items-center gap-2 mb-2">
+                                <Info className="w-4 h-4" /> {t.diagnosis}
+                              </span>
+                              <p className="text-[0.95rem] text-text/80 leading-relaxed italic font-medium">
+                                {report.explanation}
+                              </p>
+                            </div>
+                          )}
+
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                            <div className="bg-emerald-50/60 p-4 rounded-2xl border border-emerald-100/50">
+                               <span className="text-[0.65rem] font-black text-emerald-700 uppercase tracking-[0.2em] flex items-center gap-2 mb-2">
+                                 <Sprout className="w-4 h-4" /> {t.organicTreatment}
+                               </span>
+                               <p className="text-[0.85rem] text-emerald-900 leading-relaxed font-bold">
+                                 {(() => {
+                                    try {
+                                      const tr = typeof report.treatment === 'string' ? JSON.parse(report.treatment) : report.treatment;
+                                      return tr.organic;
+                                    } catch(e) { return "N/A"; }
+                                 })()}
+                               </p>
+                            </div>
+                            <div className="bg-orange-50/60 p-4 rounded-2xl border border-orange-100/50">
+                               <span className="text-[0.65rem] font-black text-orange-700 uppercase tracking-[0.2em] flex items-center gap-2 mb-2">
+                                 <AlertTriangle className="w-4 h-4" /> {t.chemicalTreatment}
+                               </span>
+                               <p className="text-[0.85rem] text-orange-900 leading-relaxed font-bold">
+                                 {(() => {
+                                    try {
+                                      const tr = typeof report.treatment === 'string' ? JSON.parse(report.treatment) : report.treatment;
+                                      return tr.chemical;
+                                    } catch(e) { return "N/A"; }
+                                 })()}
+                               </p>
+                            </div>
+                          </div>
+                        </div>
+
+                        {report.weatherContext && (
+                          <div className="mt-auto pt-6 border-t border-border/50 flex flex-wrap gap-3">
+                             <div className="flex items-center gap-2 bg-orange-100/40 text-orange-800 px-3 py-1.5 rounded-xl text-xs font-black border border-orange-200/50">
+                               <CloudSun className="w-3.5 h-3.5" />
+                               <span>{report.weatherContext.temp}°C</span>
+                             </div>
+                             <div className="flex items-center gap-2 bg-blue-100/40 text-blue-800 px-3 py-1.5 rounded-xl text-xs font-black border border-blue-200/50">
+                               <Droplets className="w-3.5 h-3.5" />
+                               <span>{report.weatherContext.humidity}% {t.humidity}</span>
+                             </div>
+                             <div className="flex-1 flex items-center gap-3 ml-auto px-2 opacity-50">
+                                <div className="flex-1 h-1 bg-bg rounded-full overflow-hidden">
+                                   <div className="h-full bg-primary/40" style={{ width: `${report.confidence}%` }}></div>
+                                </div>
+                                <span className="text-[0.6rem] font-black text-muted uppercase tracking-widest leading-none">Scored</span>
+                             </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </motion.div>
           )}
 
@@ -2069,7 +2247,7 @@ export default function App() {
                               <MapPin className="w-5 h-5 text-primary" />
                               <div className="flex-1">
                                 <p className="text-[0.65rem] font-bold text-muted uppercase tracking-wider mb-1">
-                                  Current: <span className="text-primary">{weather?.locationName || manualLocation || 'Indore'}</span>
+                                  Current: <span className="text-primary">{weather?.locationName || manualLocation || 'Not Set'}</span>
                                 </p>
                                 <div className="flex items-center gap-2">
                                   <input 
@@ -2081,7 +2259,7 @@ export default function App() {
                                     onKeyDown={(e) => {
                                       if (e.key === 'Enter') {
                                         setLocationMode('manual');
-                                        handleManualLocationSearch();
+                                        loadWeather(manualLocation);
                                       }
                                     }}
                                   />
@@ -2092,7 +2270,7 @@ export default function App() {
                                         if (navigator.geolocation) {
                                           setIsRefreshingWeather(true);
                                           navigator.geolocation.getCurrentPosition(
-                                            (pos) => loadWeather(pos.coords.latitude, pos.coords.longitude),
+                                            (pos) => loadWeather(`${pos.coords.latitude}, ${pos.coords.longitude}`),
                                             () => {
                                               setIsRefreshingWeather(false);
                                               alert("Location access denied. Please type manually.");
@@ -2108,7 +2286,7 @@ export default function App() {
                                     <button 
                                       onClick={() => {
                                         setLocationMode('manual');
-                                        handleManualLocationSearch();
+                                        loadWeather(manualLocation);
                                       }}
                                       disabled={isRefreshingWeather}
                                       className="p-2 bg-primary text-white rounded-xl hover:scale-105 active:scale-95 transition-all shadow-md disabled:bg-muted"
@@ -2254,6 +2432,61 @@ export default function App() {
           <span className="text-[10px] font-bold uppercase tracking-wider">{t.settings}</span>
         </button>
       </nav>
+      
+      <AnimatePresence>
+        {!isOnboarded && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
+          >
+            <motion.div 
+              initial={{ scale: 0.9, y: 20 }}
+              animate={{ scale: 1, y: 0 }}
+              className="bg-white rounded-3xl p-8 max-w-sm w-full shadow-2xl text-center border border-gray-100"
+            >
+              <div className="w-20 h-20 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-6">
+                <Leaf className="w-10 h-10 text-green-600" />
+              </div>
+              <h2 className="text-2xl font-bold text-gray-900 mb-2">{t.welcome}</h2>
+              <p className="text-gray-600 mb-8">{t.tagline}</p>
+              
+              <div className="space-y-6 text-left mb-8">
+                <div className="flex items-start gap-4">
+                  <div className="w-8 h-8 rounded-lg bg-blue-50 flex items-center justify-center shrink-0">
+                    <Camera className="w-5 h-5 text-blue-600" />
+                  </div>
+                  <p className="text-sm text-gray-600 leading-relaxed">{t.onboarding1}</p>
+                </div>
+                <div className="flex items-start gap-4">
+                  <div className="w-8 h-8 rounded-lg bg-orange-50 flex items-center justify-center shrink-0">
+                    <CloudRain className="w-5 h-5 text-orange-600" />
+                  </div>
+                  <p className="text-sm text-gray-600 leading-relaxed">{t.onboarding2}</p>
+                </div>
+                <div className="flex items-start gap-4">
+                  <div className="w-8 h-8 rounded-lg bg-purple-50 flex items-center justify-center shrink-0">
+                    <MessageSquare className="w-5 h-5 text-purple-600" />
+                  </div>
+                  <p className="text-sm text-gray-600 leading-relaxed">{t.onboarding3}</p>
+                </div>
+              </div>
+
+              <button
+                onClick={() => {
+                  setIsOnboarded(true);
+                  if (user) localStorage.setItem(`onboarded_${user.uid}`, 'true');
+                  speak(`${t.welcome}. ${t.onboarding1} ${t.onboarding2} ${t.onboarding3}`);
+                }}
+                className="w-full py-4 bg-green-600 text-white rounded-xl font-bold hover:bg-green-700 transition-colors shadow-lg shadow-green-200"
+              >
+                {t.getStarted}
+              </button>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   </div>
   );

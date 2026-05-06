@@ -16,22 +16,21 @@ const languageNames: Record<string, string> = {
 };
 
 export const analyzePlantImage = async (base64Image: string, language: string = 'en') => {
-  const model = "gemini-3-flash-preview";
   const langName = languageNames[language] || 'English';
   
   const prompt = `
-    Analyze this agricultural image. 
-    1. Identify the plant/crop.
-    2. Detect any pests or diseases.
+    Analyze this agricultural image specifically for the Indian agricultural context. 
+    1. Identify the plant/crop and variety common in India.
+    2. Detect any pests or diseases with scientific precision.
     3. Provide a confidence score (0-100).
-    4. Suggest organic and chemical treatments.
-    5. Provide a brief explanation of why this was detected.
+    4. Suggest organic (Prakritik kheti) and chemical (IPM based) treatments suitable for Indian farmers.
+    5. Provide a brief explanation with reference to scientific reasoning or commonly cited agricultural research in India.
     
     IMPORTANT: You MUST provide all text descriptions, plant names, and treatment details in ${langName}.
   `;
 
   const response = await ai.models.generateContent({
-    model,
+    model: "gemini-3-flash-preview",
     contents: [
       {
         parts: [
@@ -41,6 +40,7 @@ export const analyzePlantImage = async (base64Image: string, language: string = 
       }
     ],
     config: {
+      systemInstruction: "You are a senior agricultural scientist specializing in Indian crops and pests. Your advice must be based on reputable research papers (e.g., ICAR, IARI) and scientifically proven methods suitable for the Indian climate and soil conditions.",
       responseMimeType: "application/json",
       responseSchema: {
         type: Type.OBJECT,
@@ -54,7 +54,8 @@ export const analyzePlantImage = async (base64Image: string, language: string = 
             properties: {
               organic: { type: Type.STRING },
               chemical: { type: Type.STRING }
-            }
+            },
+            required: ["organic", "chemical"]
           }
         },
         required: ["plantName", "issueDetected", "confidence", "explanation", "treatments"]
@@ -62,13 +63,17 @@ export const analyzePlantImage = async (base64Image: string, language: string = 
     }
   });
 
-  return JSON.parse(response.text);
+  return JSON.parse(response.text || '{}');
 };
 
 export const chatWithExpert = async (history: { role: 'user' | 'model', text: string }[], message: string, language: string = 'en', base64Image?: string) => {
-  const model = "gemini-3-flash-preview";
   const langName = languageNames[language] || 'English';
-  
+  const systemInstruction = `You are Krishi Shayak, an expert Indian agricultural scientist. 
+      Respond based on scientifically proven data, citing Indian agricultural research (ICAR, university papers) when possible. 
+      Focus on sustainable and effective practices for Indian farmers.
+      CRITICAL: You MUST respond ENTIRELY in ${langName}. 
+      Use local farming terminology where appropriate to sound natural to a farmer.`;
+
   const contents = history.map(h => ({
     role: h.role,
     parts: [{ text: h.text }]
@@ -85,31 +90,62 @@ export const chatWithExpert = async (history: { role: 'user' | 'model', text: st
   });
 
   const response = await ai.models.generateContent({
-    model,
+    model: "gemini-3-flash-preview",
     contents,
     config: {
-      systemInstruction: `You are an expert agricultural scientist (Krishi Shayak). 
-      Provide helpful, accurate, and practical advice to farmers about crops, pests, diseases, and treatments. 
-      
-      If an image is provided, analyze it and provide contextual advice based on the image and the user's question.
-      
-      CRITICAL: You MUST respond ENTIRELY in ${langName}. 
-      Do not use English if the language is not English. 
-      Even for technical terms, try to use the most common term used by farmers in ${langName} or provide the English term in brackets only if absolutely necessary.
-      Keep answers concise, actionable, and formatted using Markdown for readability.`
+      systemInstruction,
+      tools: [{ googleSearch: {} } as any]
     }
   });
 
   return response.text;
 };
 
-export const enhanceImageQuality = async (base64Image: string) => {
-  // This is a placeholder for actual enhancement logic if needed, 
-  // but we can use Gemini to "describe" if the image is good enough.
-  const model = "gemini-3-flash-preview";
+export const getAIPoweredWeather = async (location: string, language: string = 'en') => {
+  const langName = languageNames[language] || 'English';
   
+  const prompt = `Provide the current weather and agricultural insights for ${location} in India.
+  Return a JSON object with: 
+  - temp (number, Celsius)
+  - condition (string in ${langName})
+  - humidity (number, percentage)
+  - windSpeed (number, km/h)
+  - locationName (string)
+  - riskLevel (Low/Medium/High for disease based on weather)
+  - farmingSuggestion (advice in ${langName})
+  - irrigationAdvice (advice in ${langName})
+  - sprayingAlert (advice in ${langName})`;
+
+  const result = await ai.models.generateContent({
+    model: "gemini-3-flash-preview",
+    contents: [{ parts: [{ text: prompt }] }],
+    config: {
+      tools: [{ googleSearch: {} } as any],
+      responseMimeType: "application/json",
+      responseSchema: {
+        type: Type.OBJECT,
+        properties: {
+          temp: { type: Type.NUMBER },
+          condition: { type: Type.STRING },
+          humidity: { type: Type.NUMBER },
+          windSpeed: { type: Type.NUMBER },
+          locationName: { type: Type.STRING },
+          riskLevel: { type: Type.STRING },
+          farmingSuggestion: { type: Type.STRING },
+          irrigationAdvice: { type: Type.STRING },
+          sprayingAlert: { type: Type.STRING }
+        },
+        required: ["temp", "condition", "humidity", "windSpeed", "locationName", "riskLevel", "farmingSuggestion", "irrigationAdvice", "sprayingAlert"]
+      }
+    }
+  });
+
+  return JSON.parse(result.text || '{}');
+};
+
+export const enhanceImageQuality = async (base64Image: string) => {
   const response = await ai.models.generateContent({
-    model,
+    model: "gemini-3-flash-preview",
     contents: [
       {
         parts: [
@@ -120,7 +156,7 @@ export const enhanceImageQuality = async (base64Image: string) => {
     ]
   });
 
-  const text = response.text;
+  const text = response.text || '';
   return {
     isUsable: text.toUpperCase().includes('YES'),
     reason: text
