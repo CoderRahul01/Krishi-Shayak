@@ -81,17 +81,17 @@ const AGRI_PHONETIC_MAP: Record<string, Record<string, string>> = {
     };
 
     const PREFERRED_VOICES: Record<string, string[]> = {
-    'hi': ['Google हिन्दी', 'hi-IN-Neural2-A', 'hi-IN-Wavenet-A', 'hi-IN-Standard-A', 'Microsoft Hemant'],
-    'mr': ['Google मराठी', 'mr-IN-Wavenet-A', 'mr-IN-Standard-A', 'Microsoft Yashwant'],
-    'te': ['Google తెలుగు', 'te-IN-Standard-A', 'Microsoft Shruti'],
-    'ta': ['Google தமிழ்', 'ta-IN-Wavenet-A', 'ta-IN-Standard-A', 'Microsoft Valluvar'],
-    'bn': ['Google বাংলা', 'bn-IN-Wavenet-A', 'bn-IN-Standard-A', 'Microsoft Hemant'],
-    'gu': ['Google ગુજરાતી', 'gu-IN-Wavenet-A', 'gu-IN-Standard-A', 'Microsoft Kalpana'],
-    'kn': ['Google ಕನ್ನಡ', 'kn-IN-Wavenet-A', 'kn-IN-Standard-A', 'Microsoft Sapna'],
-    'ml': ['Google മലയാളം', 'ml-IN-Wavenet-A', 'ml-IN-Standard-A', 'Microsoft Midhun'],
-    'pa': ['Google ਪੰਜਾਬੀ', 'pa-IN-Wavenet-A', 'pa-IN-Standard-A', 'Microsoft Hemant'],
-    'en': ['Google UK English Female', 'Google US English', 'en-IN-Neural2-A', 'en-IN-Wavenet-A', 'en-GB-Wavenet-A']
-    };
+  'hi': ['hi-IN-Neural2-A', 'hi-IN-Neural2-D', 'Google हिन्दी', 'hi-IN-Wavenet-A', 'hi-IN-Standard-A', 'Microsoft Hemant'],
+  'mr': ['Google मराठी', 'mr-IN-Wavenet-A', 'mr-IN-Standard-A', 'Microsoft Yashwant'],
+  'te': ['Google తెలుగు', 'te-IN-Standard-A', 'Microsoft Shruti'],
+  'ta': ['Google தமிழ்', 'ta-IN-Wavenet-A', 'ta-IN-Standard-A', 'Microsoft Valluvar'],
+  'bn': ['Google বাংলা', 'bn-IN-Wavenet-A', 'bn-IN-Standard-A', 'Microsoft Hemant'],
+  'gu': ['Google ગુજરાતી', 'gu-IN-Wavenet-A', 'gu-IN-Standard-A', 'Microsoft Kalpana'],
+  'kn': ['Google ಕನ್ನಡ', 'kn-IN-Wavenet-A', 'kn-IN-Standard-A', 'Microsoft Sapna'],
+  'ml': ['Google മലയാളം', 'ml-IN-Wavenet-A', 'ml-IN-Standard-A', 'Microsoft Midhun'],
+  'pa': ['Google ਪੰਜਾਬੀ', 'pa-IN-Wavenet-A', 'pa-IN-Standard-A', 'Microsoft Hemant'],
+  'en': ['en-IN-Neural2-A', 'en-IN-Neural2-D', 'en-US-Neural2-F', 'Google UK English Female', 'Google US English', 'en-IN-Wavenet-A', 'en-GB-Wavenet-A']
+};
 
     const prepareTextForSpeech = (text: string, lang: string, shouldTransliterate: boolean = false) => {
 
@@ -177,7 +177,16 @@ export default function App() {
     };
 
     const storedOnboard = localStorage.getItem(`onboarded_${user?.uid}`);
-    if (!storedOnboard && user) setIsOnboarded(false);
+    if (!storedOnboard && user) {
+      setIsOnboarded(false);
+      // Greet the user personally on first visit
+      const firstName = user.displayName?.split(' ')[0] || 'Farmer';
+      const welcomeMsg = language === 'hi' ? `नमस्ते ${firstName}! कृषि सहायक में आपका स्वागत है। मैं आपकी फसलों की देखभाल में कैसे मदद कर सकता हूँ?` :
+                         `Hello ${firstName}! Welcome to Krishi Shayak. How can I help you with your crops today?`;
+      setLastSpeakableText(welcomeMsg);
+      // Wait a bit for voices to load
+      setTimeout(() => speak(welcomeMsg), 1500);
+    }
 
     if ('speechSynthesis' in window) {
       window.speechSynthesis.getVoices();
@@ -849,7 +858,17 @@ export default function App() {
       });
 
       if (result.issueDetected && result.explanation) {
-        const textToSpeak = `${result.plantName}. ${result.issueDetected}. ${result.explanation}. ${t.organicTreatment}: ${result.treatments.organic}. ${t.chemicalTreatment}: ${result.treatments.chemical}.`;
+        const tr = result.treatments;
+        // Language-specific conversational structure
+        const intro = language === 'hi' ? `मैंने फोटो का विश्लेषण किया है। आपके ${result.plantName} में ${result.issueDetected} की समस्या लग रही है।` : 
+                      language === 'mr' ? `मी फोटोचे विश्लेषण केले आहे. तुमच्या ${result.plantName} मध्ये ${result.issueDetected} ची समस्या असल्याचे दिसून येत आहे.` :
+                      `I've analyzed the photo. It looks like your ${result.plantName} has ${result.issueDetected}.`;
+        
+        const treatmentInfo = language === 'hi' ? `जैविक उपचार के लिए, ${tr.organic}। रासायनिक विकल्प के लिए, ${tr.chemical}।` :
+                             language === 'mr' ? `सेंद्रिय उपचारासाठी, ${tr.organic}। रासायनिक पर्यायासाठी, ${tr.chemical}।` :
+                             `For organic treatment, you can try ${tr.organic}. For chemical options, ${tr.chemical}.`;
+
+        const textToSpeak = `${intro} ${result.explanation} ${treatmentInfo}`;
         setLastSpeakableText(textToSpeak);
         speak(textToSpeak);
       }
@@ -1078,6 +1097,7 @@ export default function App() {
       }
 
       const extraContext = `
+        Farmer Name: ${user?.displayName || 'Kisan Bhai'}
         Current Location: ${weather?.locationName || manualLocation}
         Weather: ${weather ? `${weather.temp}°C, ${weather.condition}, Humidity: ${weather.humidity}%` : 'Unknown'}
         Agricultural Risk: ${weather?.riskLevel || 'Unknown'}
@@ -1199,7 +1219,12 @@ export default function App() {
 
   const speakWeatherInsights = () => {
     if (!weather) return;
-    const weatherText = `${t.fieldWeather} for ${weather.locationName}. ${weather.temp} degrees. ${weather.condition}. ${t.diseaseRisk}: ${weather.riskLevel}.`;
+    const firstName = user?.displayName?.split(' ')[0] || 'Kisan Bhai';
+    
+    const weatherText = language === 'hi' ? 
+      `नमस्ते ${firstName}, यहाँ ${weather.locationName} का मौसम अपडेट है। अभी तापमान ${weather.temp} डिग्री है और ${weather.condition} की स्थिति है। रोग का जोखिम ${weather.riskLevel} है। मेरा सुझाव है कि आप ${weather.farmingSuggestion} पर ध्यान दें।` :
+      `Hello ${firstName}, here is your weather update for ${weather.locationName}. It's currently ${weather.temp} degrees with ${weather.condition}. The disease risk is ${weather.riskLevel}, so I suggest you focus on ${weather.farmingSuggestion}.`;
+      
     setLastSpeakableText(weatherText);
     speak(weatherText, true);
   };
