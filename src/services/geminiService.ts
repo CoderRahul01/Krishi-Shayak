@@ -66,13 +66,18 @@ export const analyzePlantImage = async (base64Image: string, language: string = 
   return JSON.parse(response.text || '{}');
 };
 
-export const chatWithExpert = async (history: { role: 'user' | 'model', text: string }[], message: string, language: string = 'en', base64Image?: string) => {
+export const chatWithExpert = async (history: { role: 'user' | 'model', text: string }[], message: string, language: string = 'en', base64Image?: string, extraContext?: string) => {
   const langName = languageNames[language] || 'English';
   const systemInstruction = `You are Krishi Shayak, an expert Indian agricultural scientist. 
       Respond based on scientifically proven data, citing Indian agricultural research (ICAR, university papers) when possible. 
       Focus on sustainable and effective practices for Indian farmers.
+      
+      CONTEXT:
+      ${extraContext || 'No additional context provided.'}
+      
       CRITICAL: You MUST respond ENTIRELY in ${langName}. 
-      Use local farming terminology where appropriate to sound natural to a farmer.`;
+      Use local farming terminology where appropriate to sound natural to a farmer.
+      Remember the previous parts of the conversation to provide a fluid and helpful experience.`;
 
   const contents = history.map(h => ({
     role: h.role,

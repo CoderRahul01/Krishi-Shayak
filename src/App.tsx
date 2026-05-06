@@ -1026,7 +1026,14 @@ export default function App() {
     setChatFilePreview(null);
 
     try {
-      const response = await chatWithExpert(currentMessages, messageText, language, imageToSend);
+      const extraContext = `
+        Current Location: ${weather?.locationName || manualLocation}
+        Weather: ${weather ? `${weather.temp}°C, ${weather.condition}, Humidity: ${weather.humidity}%` : 'Unknown'}
+        Agricultural Risk: ${weather?.riskLevel || 'Unknown'}
+        Last Detection: ${detectionResult ? `${detectionResult.plantName} - ${detectionResult.issueDetected}` : 'None'}
+      `;
+      
+      const response = await chatWithExpert(currentMessages, messageText, language, imageToSend, extraContext);
       setChatMessages([...newMessages, { role: 'model' as const, text: response }]);
       setLastSpeakableText(response);
       speak(response);
@@ -1035,18 +1042,21 @@ export default function App() {
     }
   };
 
-  const speak = (text: string, force: boolean = false) => {
+  const speak = (text?: string, forceInterrupt: boolean = false) => {
     if (!('speechSynthesis' in window)) return;
     
     // If text is provided, update the last speakable text
     if (text) setLastSpeakableText(text);
     
-    window.speechSynthesis.cancel();
-    if (!isVoiceEnabled && !force) return;
+    if (forceInterrupt) {
+      window.speechSynthesis.cancel();
+    }
+    
+    if (!isVoiceEnabled && !forceInterrupt) return;
     
     const textToRead = text || lastSpeakableText;
     if (!textToRead) return;
-    
+
     const voiceLangs: Record<string, string> = {
       hi: 'hi-IN', mr: 'mr-IN', te: 'te-IN', ta: 'ta-IN',
       bn: 'bn-IN', gu: 'gu-IN', kn: 'kn-IN', ml: 'ml-IN',
@@ -1056,8 +1066,16 @@ export default function App() {
     const targetLang = voiceLangs[language] || 'en-IN';
     const allVoices = window.speechSynthesis.getVoices();
     
-    // Prioritize natural sounding voices for Hindi
-    const matchedVoices = allVoices.filter(v => v.lang === targetLang || v.lang.replace('_', '-').startsWith(language));
+    // Sort voices to put Google/natural ones first
+    const matchedVoices = [...allVoices]
+      .filter(v => v.lang === targetLang || v.lang.replace('_', '-').startsWith(language))
+      .sort((a, b) => {
+        const aGoogle = a.name.includes('Google');
+        const bGoogle = b.name.includes('Google');
+        if (aGoogle && !bGoogle) return -1;
+        if (!aGoogle && bGoogle) return 1;
+        return 0;
+      });
     
     // Check if we have a real regional voice
     const hasLocalVoice = matchedVoices.length > 0;
@@ -1069,20 +1087,17 @@ export default function App() {
     const utterance = new SpeechSynthesisUtterance(cleanText);
     
     if (hasLocalVoice) {
-      // Use regional voice
       utterance.lang = targetLang;
-      // Preference order: Google (very natural), then Microsoft/Premium, then any matched
-      let selectedVoice = matchedVoices.find(v => v.name.includes('Google') && v.lang.startsWith('hi')) ||
-                         matchedVoices.find(v => v.name.includes('Google') && v.lang.startsWith(language)) ||
+      // Preference: Google -> Natural -> Any matched
+      let selectedVoice = matchedVoices.find(v => v.name.includes('Google')) ||
                          matchedVoices.find(v => v.name.includes('Natural')) ||
-                         matchedVoices.find(v => v.lang === targetLang) ||
                          matchedVoices[0];
       if (selectedVoice) utterance.voice = selectedVoice;
     }
 
-    // Natural tone adjustments
-    utterance.rate = language === 'hi' ? 0.9 : 1.0; 
-    utterance.pitch = 1.05; // Slightly warmer pitch
+    // Natural tone adjustments for a friendlier feel
+    utterance.rate = language === 'hi' ? 1.0 : 1.0; // Fast enough as requested
+    utterance.pitch = 1.0; 
     
     utterance.onstart = () => setIsSpeaking(true);
     utterance.onend = () => setIsSpeaking(false);
