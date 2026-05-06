@@ -1,6 +1,6 @@
 import { GoogleGenAI, Type } from "@google/genai";
 
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
+const ai = new GoogleGenAI(process.env.GEMINI_API_KEY || '');
 
 const languageNames: Record<string, string> = {
   en: 'English',
@@ -29,41 +29,46 @@ export const analyzePlantImage = async (base64Image: string, language: string = 
     IMPORTANT: You MUST provide all text descriptions, plant names, and treatment details in ${langName}.
   `;
 
-  const response = await ai.models.generateContent({
-    model: "gemini-3-flash-preview",
-    contents: [
-      {
-        parts: [
-          { text: prompt },
-          { inlineData: { data: base64Image, mimeType: "image/jpeg" } }
-        ]
+  try {
+    const model = ai.getGenerativeModel({ model: "gemini-1.5-flash" });
+    const response = await model.generateContent({
+      contents: [
+        {
+          parts: [
+            { text: prompt },
+            { inlineData: { data: base64Image, mimeType: "image/jpeg" } }
+          ]
+        }
+      ],
+      generationConfig: {
+        systemInstruction: "You are a senior agricultural scientist specializing in Indian crops and pests. Your advice must be based on reputable research papers (e.g., ICAR, IARI) and scientifically proven methods suitable for the Indian climate and soil conditions.",
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            plantName: { type: Type.STRING },
+            issueDetected: { type: Type.STRING },
+            confidence: { type: Type.NUMBER },
+            explanation: { type: Type.STRING },
+            treatments: {
+              type: Type.OBJECT,
+              properties: {
+                organic: { type: Type.STRING },
+                chemical: { type: Type.STRING }
+              },
+              required: ["organic", "chemical"]
+            }
+          },
+          required: ["plantName", "issueDetected", "confidence", "explanation", "treatments"]
+        }
       }
-    ],
-    config: {
-      systemInstruction: "You are a senior agricultural scientist specializing in Indian crops and pests. Your advice must be based on reputable research papers (e.g., ICAR, IARI) and scientifically proven methods suitable for the Indian climate and soil conditions.",
-      responseMimeType: "application/json",
-      responseSchema: {
-        type: Type.OBJECT,
-        properties: {
-          plantName: { type: Type.STRING },
-          issueDetected: { type: Type.STRING },
-          confidence: { type: Type.NUMBER },
-          explanation: { type: Type.STRING },
-          treatments: {
-            type: Type.OBJECT,
-            properties: {
-              organic: { type: Type.STRING },
-              chemical: { type: Type.STRING }
-            },
-            required: ["organic", "chemical"]
-          }
-        },
-        required: ["plantName", "issueDetected", "confidence", "explanation", "treatments"]
-      }
-    }
-  });
+    });
 
-  return JSON.parse(response.text || '{}');
+    return JSON.parse(response.response.text() || '{}');
+  } catch (error) {
+    console.error("Image Analysis failed:", error);
+    return {};
+  }
 };
 
 export const chatWithExpert = async (history: { role: 'user' | 'model', text: string }[], message: string, language: string = 'en', base64Image?: string, extraContext?: string) => {
@@ -106,16 +111,19 @@ export const chatWithExpert = async (history: { role: 'user' | 'model', text: st
     parts: userParts
   });
 
-  const response = await ai.models.generateContent({
-    model: "gemini-3-flash-preview",
-    contents,
-    config: {
-      systemInstruction,
+  try {
+    const model = ai.getGenerativeModel({ 
+      model: "gemini-1.5-flash",
+      systemInstruction: systemInstruction,
       tools: [{ googleSearch: {} } as any]
-    }
-  });
+    });
 
-  return response.text;
+    const result = await model.generateContent({ contents });
+    return result.response.text();
+  } catch (error) {
+    console.error("Chat failed:", error);
+    return "I'm sorry, I'm having a little trouble connecting right now. Can we try again in a moment?";
+  }
 };
 
 export const getAIPoweredWeather = async (location: string, language: string = 'en') => {
@@ -133,51 +141,61 @@ export const getAIPoweredWeather = async (location: string, language: string = '
   - irrigationAdvice (advice in ${langName})
   - sprayingAlert (advice in ${langName})`;
 
-  const result = await ai.models.generateContent({
-    model: "gemini-3-flash-preview",
-    contents: [{ parts: [{ text: prompt }] }],
-    config: {
+  try {
+    const model = ai.getGenerativeModel({ 
+      model: "gemini-1.5-flash",
       tools: [{ googleSearch: {} } as any],
-      responseMimeType: "application/json",
-      responseSchema: {
-        type: Type.OBJECT,
-        properties: {
-          temp: { type: Type.NUMBER },
-          condition: { type: Type.STRING },
-          humidity: { type: Type.NUMBER },
-          windSpeed: { type: Type.NUMBER },
-          locationName: { type: Type.STRING },
-          riskLevel: { type: Type.STRING },
-          farmingSuggestion: { type: Type.STRING },
-          irrigationAdvice: { type: Type.STRING },
-          sprayingAlert: { type: Type.STRING }
-        },
-        required: ["temp", "condition", "humidity", "windSpeed", "locationName", "riskLevel", "farmingSuggestion", "irrigationAdvice", "sprayingAlert"]
+      generationConfig: {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            temp: { type: Type.NUMBER },
+            condition: { type: Type.STRING },
+            humidity: { type: Type.NUMBER },
+            windSpeed: { type: Type.NUMBER },
+            locationName: { type: Type.STRING },
+            riskLevel: { type: Type.STRING },
+            farmingSuggestion: { type: Type.STRING },
+            irrigationAdvice: { type: Type.STRING },
+            sprayingAlert: { type: Type.STRING }
+          },
+          required: ["temp", "condition", "humidity", "windSpeed", "locationName", "riskLevel", "farmingSuggestion", "irrigationAdvice", "sprayingAlert"]
+        }
       }
-    }
-  });
+    });
 
-  return JSON.parse(result.text || '{}');
+    const result = await model.generateContent(prompt);
+    return JSON.parse(result.response.text() || '{}');
+  } catch (error) {
+    console.error("Weather insights failed:", error);
+    return null;
+  }
 };
 
 export const enhanceImageQuality = async (base64Image: string) => {
-  const response = await ai.models.generateContent({
-    model: "gemini-3-flash-preview",
-    contents: [
-      {
-        parts: [
-          { text: "Is this image clear enough for agricultural disease detection? Respond with 'YES' or 'NO' and a reason." },
-          { inlineData: { data: base64Image, mimeType: "image/jpeg" } }
-        ]
-      }
-    ]
-  });
+  try {
+    const model = ai.getGenerativeModel({ model: "gemini-1.5-flash" });
+    const response = await model.generateContent({
+      contents: [
+        {
+          parts: [
+            { text: "Is this image clear enough for agricultural disease detection? Respond with 'YES' or 'NO' and a reason." },
+            { inlineData: { data: base64Image, mimeType: "image/jpeg" } }
+          ]
+        }
+      ]
+    });
 
-  const text = response.text || '';
-  return {
-    isUsable: text.toUpperCase().includes('YES'),
-    reason: text
-  };
+    const text = response.response.text() || '';
+    return {
+      isUsable: text.toUpperCase().includes('YES'),
+      reason: text
+    };
+  } catch (error) {
+    console.error("Quality check failed:", error);
+    return { isUsable: true, reason: "" }; // Fallback to skip check
+  }
 };
 
 export const generateEmbedding = async (text: string) => {
