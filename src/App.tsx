@@ -39,9 +39,10 @@ import {
   CloudRain
 } from 'lucide-react';
 import { useFirebase } from './components/FirebaseProvider';
-import { analyzePlantImage, chatWithExpert, enhanceImageQuality, getAIPoweredWeather, generateEmbedding, cosineSimilarity } from './services/geminiService';
+import { analyzePlantImage, chatWithExpert, enhanceImageQuality, getAIPoweredWeather, generateEmbedding, cosineSimilarity, getAppSentientBriefing } from './services/geminiService';
 import { transliterateDevanagari } from './lib/transliterator';
 import { compressImage } from './lib/utils';
+import { agriVoice } from './services/voiceService';
 // import { fetchWeather, WeatherData, fetchWeatherByCity } from './services/weatherService';
 import ReactMarkdown from 'react-markdown';
 import { collection, addDoc, query, where, orderBy, onSnapshot, Timestamp, getDocFromServer, doc, deleteDoc } from 'firebase/firestore';
@@ -80,7 +81,7 @@ const AGRI_PHONETIC_MAP: Record<string, Record<string, string>> = {
     }
     };
 
-    const PREFERRED_VOICES: Record<string, string[]> = {
+    export const PREFERRED_VOICES: Record<string, string[]> = {
   'hi': ['hi-IN-Neural2-A', 'hi-IN-Neural2-D', 'Google हिन्दी', 'hi-IN-Wavenet-A', 'hi-IN-Standard-A', 'Microsoft Hemant'],
   'mr': ['Google मराठी', 'mr-IN-Wavenet-A', 'mr-IN-Standard-A', 'Microsoft Yashwant'],
   'te': ['Google తెలుగు', 'te-IN-Standard-A', 'Microsoft Shruti'],
@@ -167,6 +168,36 @@ export default function App() {
   const [chatFilePreview, setChatFilePreview] = useState<string | null>(null);
   const [isUploadingChatFile, setIsUploadingChatFile] = useState(false);
   const [lastSpeakableText, setLastSpeakableText] = useState<string>("");
+
+  useEffect(() => {
+    agriVoice.setLanguage(language);
+  }, [language]);
+
+  const speak = async (text: string, forceInterrupt = false) => {
+    if (!isVoiceEnabled && !forceInterrupt) return;
+    setLastSpeakableText(text);
+    if (forceInterrupt) agriVoice.stop();
+    await agriVoice.speak(text, () => setIsSpeaking(true), () => setIsSpeaking(false));
+  };
+
+  const handleBriefMe = async () => {
+    const stateData = {
+      userName: user?.displayName?.split(' ')[0] || 'Kisan Bhai',
+      location: weather?.locationName || manualLocation || 'your farm',
+      weather: weather,
+      recentDetection: detectionResult ? { plant: detectionResult.plantName, issue: detectionResult.issueDetected } : null
+    };
+    
+    setIsSpeaking(true);
+    try {
+      const briefing = await getAppSentientBriefing(stateData, language);
+      setLastSpeakableText(briefing);
+      await speak(briefing, true);
+    } catch (err) {
+      console.error("Briefing failed:", err);
+      setIsSpeaking(false);
+    }
+  };
   const [isOnboarded, setIsOnboarded] = useState(true); // Default true for now, will check in useEffect
   const currentUtteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
 
@@ -1114,112 +1145,6 @@ export default function App() {
     }
   };
 
-  const speak = async (text?: string, forceInterrupt: boolean = false) => {
-    if (!('speechSynthesis' in window)) return;
-    
-    if (text) setLastSpeakableText(text);
-    
-    if (forceInterrupt) {
-      window.speechSynthesis.cancel();
-      await new Promise(r => setTimeout(r, 50));
-    }
-    
-    if (!isVoiceEnabled && !forceInterrupt) return;
-    
-    const textToRead = text || lastSpeakableText;
-    if (!textToRead) return;
-
-    // Wait for voices to load if not already
-    let allVoices = window.speechSynthesis.getVoices();
-    if (allVoices.length === 0) {
-      await new Promise((resolve) => {
-        const timer = setTimeout(resolve, 1000); // Max wait 1s
-        window.speechSynthesis.onvoiceschanged = () => {
-          clearTimeout(timer);
-          resolve(true);
-        };
-      });
-      allVoices = window.speechSynthesis.getVoices();
-    }
-
-    const voiceLangs: Record<string, string> = {
-      hi: 'hi-IN', mr: 'mr-IN', te: 'te-IN', ta: 'ta-IN',
-      bn: 'bn-IN', gu: 'gu-IN', kn: 'kn-IN', ml: 'ml-IN',
-      pa: 'pa-IN', en: 'en-IN'
-    };
-    
-    const targetLang = voiceLangs[language] || 'en-IN';
-    const availableVoices = allVoices.filter(v => 
-      v.lang.toLowerCase().includes(language.toLowerCase()) || 
-      v.lang.toLowerCase().includes(targetLang.toLowerCase())
-    );
-    
-    let selectedVoice: SpeechSynthesisVoice | null = null;
-    const preferredNames = PREFERRED_VOICES[language] || [];
-
-    // Try to find the best match
-    for (const prefName of preferredNames) {
-      const found = availableVoices.find(v => v.name.toLowerCase().includes(prefName.toLowerCase()));
-      if (found) {
-        selectedVoice = found;
-        break;
-      }
-    }
-
-    if (!selectedVoice) {
-      selectedVoice = availableVoices.find(v => 
-        /google|online|network|neural|natural|premium/i.test(v.name)
-      ) || availableVoices[0] || null;
-    }
-
-    if (selectedVoice) {
-      console.log(`[TTS] Selected: ${selectedVoice.name} | Quality: ${/google|neural|online|wavenet/i.test(selectedVoice.name)}`);
-    }
-
-    const isQualityVoice = selectedVoice && /google|neural|wavenet|online|premium/i.test(selectedVoice.name);
-    const cleanText = prepareTextForSpeech(textToRead, language, !isQualityVoice);
-    if (!cleanText) return;
-
-    // Improved Phrase-based Chunking (splits by punctuation but keeps it)
-    const chunks = cleanText.match(/[^,.!?;...]+[,.!?;...]*|[,.!?;...]+/g) || [cleanText];
-    
-    setIsSpeaking(true);
-
-    for (const chunk of chunks) {
-      const trimmedChunk = chunk.trim();
-      if (!trimmedChunk) continue;
-
-      // If user interrupted during chunked playback
-      if (forceInterrupt === false && !isVoiceEnabled) break;
-
-      const utterance = new SpeechSynthesisUtterance(trimmedChunk);
-      if (selectedVoice) {
-        utterance.voice = selectedVoice;
-        utterance.lang = selectedVoice.lang;
-      }
-
-      // Slightly slower for better clarity and human feel
-      utterance.rate = language === 'en' ? 0.95 : 0.86; 
-      utterance.pitch = 1.05; 
-      
-      // Prosody Variation
-      if (trimmedChunk.length > 20) {
-        utterance.rate += (Math.random() * 0.04) - 0.02;
-      }
-
-      // Timing Gaps for "Breaths"
-      const gap = /[.!?]/.test(trimmedChunk) ? 450 : 180;
-
-      await new Promise((resolve) => {
-        utterance.onend = () => setTimeout(resolve, gap);
-        utterance.onerror = () => resolve(false);
-        window.speechSynthesis.speak(utterance);
-      });
-    }
-
-    setIsSpeaking(false);
-  };
-
   const toggleVoice = () => {
     if (isSpeaking) {
       window.speechSynthesis.cancel();
@@ -1395,11 +1320,12 @@ export default function App() {
                <div className="w-2 h-2 rounded-full bg-success animate-pulse"></div>
                <span className="text-[0.7rem] font-black text-primary uppercase tracking-wide">{t.online}</span>
             </div>
-            <button 
-              onClick={toggleVoice} 
+            <button
+              onClick={() => isSpeaking ? agriVoice.stop() : handleBriefMe()}
               className={`p-2.5 rounded-xl transition-all hover:scale-105 active:scale-95 ${isSpeaking ? 'bg-error text-white shadow-lg shadow-error/20' : 'bg-primary text-white shadow-lg shadow-primary/20'}`}
               title={isSpeaking ? "Stop Speaking" : "Read Aloud"}
             >
+
               {isSpeaking ? <VolumeX className="w-5 h-5" /> : <Volume2 className="w-5 h-5" />}
             </button>
             <div className="relative">
