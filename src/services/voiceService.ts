@@ -2,7 +2,6 @@ import { PREFERRED_VOICES } from '../App';
 
 class AgriVoiceService {
   private synth: SpeechSynthesis;
-  private currentUtterance: SpeechSynthesisUtterance | null = null;
   private isSpeaking: boolean = false;
   private language: string = 'en';
 
@@ -45,7 +44,11 @@ class AgriVoiceService {
       if (found) return found;
     }
 
-    return available.find(v => /google|online|network|neural|premium/i.test(v.name)) || available[0] || null;
+    // High quality fallbacks
+    const premiumFallback = available.find(v => /google|online|network|neural|wavenet|premium/i.test(v.name));
+    if (premiumFallback) return premiumFallback;
+
+    return available[0] || null;
   }
 
   /**
@@ -53,39 +56,56 @@ class AgriVoiceService {
    * Breaks text into emotional chunks and adds randomized micro-delays and pitch shifts.
    */
   async speak(text: string, onStart?: () => void, onEnd?: () => void) {
-    this.synth.cancel();
+    this.stop(); // Clear previous
     this.isSpeaking = true;
     if (onStart) onStart();
 
     const voice = await this.getBestVoice(this.language);
     
-    // Clean text but keep prosody markers
-    const cleanText = text.replace(/[*#`]/g, '').trim();
-    // Split into natural "breathing" chunks
+    // Convert text to a truly spoken format
+    const cleanText = text
+      .replace(/[*#`]/g, '')
+      .replace(/(\d+)\.(\d+)/g, '$1 point $2') // Read decimals naturally
+      .trim();
+
+    // Split into natural "breathing" chunks (comma, period, etc)
     const chunks = cleanText.match(/[^,.!?;...]+[,.!?;...]*|[,.!?;...]+/g) || [cleanText];
 
     for (const chunk of chunks) {
       if (!this.isSpeaking) break;
 
-      const utterance = new SpeechSynthesisUtterance(chunk.trim());
+      const trimmedChunk = chunk.trim();
+      if (!trimmedChunk) continue;
+
+      const utterance = new SpeechSynthesisUtterance(trimmedChunk);
       if (voice) {
         utterance.voice = voice;
         utterance.lang = voice.lang;
       }
 
-      // Humanistic delivery parameters
-      const baseRate = this.language === 'en' ? 0.96 : 0.86;
-      // Micro-variation to avoid robotic "metronome" effect
-      utterance.rate = baseRate + (Math.random() * 0.06 - 0.03);
-      utterance.pitch = 1.04 + (Math.random() * 0.04);
+      // Humanistic Prosody: Slightly slower and warmer
+      const isEnglish = this.language === 'en';
+      const baseRate = isEnglish ? 0.94 : 0.84;
+      
+      // Randomize slightly to sound like a person thinking
+      utterance.rate = baseRate + (Math.random() * 0.04 - 0.02);
+      utterance.pitch = 1.05 + (Math.random() * 0.04);
       utterance.volume = 1.0;
 
       const isEnding = /[.!?]/.test(chunk);
-      const breathGap = isEnding ? 500 : 200;
+      // Breathing gap: Longer for periods, shorter for commas
+      const breathGap = isEnding ? 500 : 250;
 
       await new Promise((resolve) => {
-        utterance.onend = () => setTimeout(resolve, breathGap);
-        utterance.onerror = () => resolve(false);
+        utterance.onend = () => {
+          // Add a tiny "thinking" delay for realism
+          const thinkingDelay = Math.random() * 100;
+          setTimeout(resolve, breathGap + thinkingDelay);
+        };
+        utterance.onerror = (e) => {
+          console.error("TTS Chunk Error:", e);
+          resolve(false);
+        };
         this.synth.speak(utterance);
       });
     }
