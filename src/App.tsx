@@ -1117,10 +1117,13 @@ export default function App() {
   const speak = async (text?: string, forceInterrupt: boolean = false) => {
     if (!('speechSynthesis' in window)) return;
     
+    // If text is provided, update the last speakable text
     if (text) setLastSpeakableText(text);
     
+    // Always cancel before speaking if forceInterrupt is true
     if (forceInterrupt) {
       window.speechSynthesis.cancel();
+      // Small delay to ensure clear state
       await new Promise(r => setTimeout(r, 50));
     }
     
@@ -1129,17 +1132,11 @@ export default function App() {
     const textToRead = text || lastSpeakableText;
     if (!textToRead) return;
 
-    // Wait for voices to load if not already
-    let allVoices = window.speechSynthesis.getVoices();
-    if (allVoices.length === 0) {
+    // Ensure voices are loaded (some browsers need this check)
+    if (window.speechSynthesis.getVoices().length === 0) {
       await new Promise((resolve) => {
-        const timer = setTimeout(resolve, 1000); // Max wait 1s
-        window.speechSynthesis.onvoiceschanged = () => {
-          clearTimeout(timer);
-          resolve(true);
-        };
+        window.speechSynthesis.onvoiceschanged = () => resolve(true);
       });
-      allVoices = window.speechSynthesis.getVoices();
     }
 
     const voiceLangs: Record<string, string> = {
@@ -1149,17 +1146,16 @@ export default function App() {
     };
     
     const targetLang = voiceLangs[language] || 'en-IN';
+    const allVoices = window.speechSynthesis.getVoices();
     const availableVoices = allVoices.filter(v => 
-      v.lang.toLowerCase().includes(language.toLowerCase()) || 
-      v.lang.toLowerCase().includes(targetLang.toLowerCase())
+      v.lang === targetLang || v.lang.replace('_', '-').startsWith(language)
     );
     
     let selectedVoice: SpeechSynthesisVoice | null = null;
     const preferredNames = PREFERRED_VOICES[language] || [];
 
-    // Try to find the best match
     for (const prefName of preferredNames) {
-      const found = availableVoices.find(v => v.name.toLowerCase().includes(prefName.toLowerCase()));
+      const found = availableVoices.find(v => v.name.includes(prefName));
       if (found) {
         selectedVoice = found;
         break;
@@ -1168,51 +1164,67 @@ export default function App() {
 
     if (!selectedVoice) {
       selectedVoice = availableVoices.find(v => 
-        /google|online|network|neural|natural|premium/i.test(v.name)
+        v.name.includes('Google') || v.name.includes('Online') || v.name.includes('Network') || v.name.includes('Neural')
       ) || availableVoices[0] || null;
     }
 
-    if (selectedVoice) {
-      console.log(`[TTS] Selected: ${selectedVoice.name} | Quality: ${/google|neural|online|wavenet/i.test(selectedVoice.name)}`);
-    }
-
-    const isQualityVoice = selectedVoice && /google|neural|wavenet|online|premium/i.test(selectedVoice.name);
+    const isQualityVoice = selectedVoice && (
+      selectedVoice.name.includes('Google') || 
+      selectedVoice.name.includes('Neural') || 
+      selectedVoice.name.includes('Wavenet') ||
+      selectedVoice.name.includes('Online')
+    );
+    
     const cleanText = prepareTextForSpeech(textToRead, language, !isQualityVoice);
     if (!cleanText) return;
 
-    // Improved Phrase-based Chunking (splits by punctuation but keeps it)
-    const chunks = cleanText.match(/[^,.!?;...]+[,.!?;...]*|[,.!?;...]+/g) || [cleanText];
+    // --- Smart Prosody: Chunked Delivery ---
+    // Splitting text into smaller phrases (by commas, periods, ellipses) 
+    // and merging punctuation back to create natural "breathing" units.
+    const rawChunks = cleanText.split(/([,.!?;]|\.\.\.)/g);
+    const chunks: string[] = [];
+    for (let i = 0; i < rawChunks.length; i += 2) {
+      const phrase = rawChunks[i] || "";
+      const punct = rawChunks[i+1] || "";
+      if (phrase.trim() || punct.trim()) {
+        chunks.push((phrase + punct).trim());
+      }
+    }
     
     setIsSpeaking(true);
 
-    for (const chunk of chunks) {
-      const trimmedChunk = chunk.trim();
-      if (!trimmedChunk) continue;
-
+    for (let i = 0; i < chunks.length; i++) {
       // If user interrupted during chunked playback
-      if (forceInterrupt === false && !isVoiceEnabled) break;
+      if (!window.speechSynthesis.speaking && i > 0 && forceInterrupt === false) break;
 
-      const utterance = new SpeechSynthesisUtterance(trimmedChunk);
+      const chunk = chunks[i];
+      if (!chunk) continue;
+
+      const utterance = new SpeechSynthesisUtterance(chunk);
       if (selectedVoice) {
         utterance.voice = selectedVoice;
         utterance.lang = selectedVoice.lang;
       }
 
-      // Slightly slower for better clarity and human feel
-      utterance.rate = language === 'en' ? 0.95 : 0.86; 
-      utterance.pitch = 1.05; 
+      // Humanistic Prosody: Slightly vary rate and pitch to avoid "metronome" effect
+      const baseRate = language === 'en' ? 0.98 : 0.88;
+      const variation = (Math.random() * 0.04) - 0.02; // +/- 2% variation
       
-      // Prosody Variation
-      if (trimmedChunk.length > 20) {
-        utterance.rate += (Math.random() * 0.04) - 0.02;
-      }
-
-      // Timing Gaps for "Breaths"
-      const gap = /[.!?]/.test(trimmedChunk) ? 450 : 180;
+      utterance.rate = baseRate + variation;
+      utterance.pitch = 1.05 + (Math.random() * 0.05); // Warmth with slight variation
+      
+      // Artificial "Breath" Gap: Longer pause after periods, shorter after commas
+      const isEnding = /[.!?]/.test(chunk);
+      const gap = isEnding ? 400 : 150;
 
       await new Promise((resolve) => {
-        utterance.onend = () => setTimeout(resolve, gap);
-        utterance.onerror = () => resolve(false);
+        utterance.onend = () => {
+          setTimeout(resolve, gap);
+        };
+        utterance.onerror = (e) => {
+          console.error("TTS Chunk Error:", e);
+          resolve(false);
+        };
         window.speechSynthesis.speak(utterance);
       });
     }
