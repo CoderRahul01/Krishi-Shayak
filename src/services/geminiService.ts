@@ -78,7 +78,8 @@ export const analyzePlantImage = async (base64Image: string, language: string = 
       }
     });
 
-    return JSON.parse(response.response.text() || '{}');
+    const text = response.response.text();
+    return JSON.parse(text || '{}');
   } catch (error) {
     console.error("Image Analysis failed:", error);
     return {};
