@@ -76,11 +76,25 @@ const AGRI_PHONETIC_MAP: Record<string, Record<string, string>> = {
     'organic': 'ऑर्गेनिक',
     'chemical': 'केमिकल',
     'spray': 'स्प्रे',
-    'yield': 'यील्ड'
-  }
-};
+    'pa': 'यील्ड'
+    }
+    };
 
-const prepareTextForSpeech = (text: string, lang: string, shouldTransliterate: boolean = false) => {
+    const PREFERRED_VOICES: Record<string, string[]> = {
+    'hi': ['Google हिन्दी', 'hi-IN-Neural2-A', 'hi-IN-Wavenet-A', 'hi-IN-Standard-A', 'Microsoft Hemant'],
+    'mr': ['Google मराठी', 'mr-IN-Wavenet-A', 'mr-IN-Standard-A', 'Microsoft Yashwant'],
+    'te': ['Google తెలుగు', 'te-IN-Standard-A', 'Microsoft Shruti'],
+    'ta': ['Google தமிழ்', 'ta-IN-Wavenet-A', 'ta-IN-Standard-A', 'Microsoft Valluvar'],
+    'bn': ['Google বাংলা', 'bn-IN-Wavenet-A', 'bn-IN-Standard-A', 'Microsoft Hemant'],
+    'gu': ['Google ગુજરાતી', 'gu-IN-Wavenet-A', 'gu-IN-Standard-A', 'Microsoft Kalpana'],
+    'kn': ['Google ಕನ್ನಡ', 'kn-IN-Wavenet-A', 'kn-IN-Standard-A', 'Microsoft Sapna'],
+    'ml': ['Google മലയാളം', 'ml-IN-Wavenet-A', 'ml-IN-Standard-A', 'Microsoft Midhun'],
+    'pa': ['Google ਪੰਜਾਬੀ', 'pa-IN-Wavenet-A', 'pa-IN-Standard-A', 'Microsoft Hemant'],
+    'en': ['Google UK English Female', 'Google US English', 'en-IN-Neural2-A', 'en-IN-Wavenet-A', 'en-GB-Wavenet-A']
+    };
+
+    const prepareTextForSpeech = (text: string, lang: string, shouldTransliterate: boolean = false) => {
+
   let cleanText = text
     .replace(/^[\s]*[-+*][\s]+/gm, '') // Remove list markers
     .replace(/[#*`~]/g, '') // Remove Markdown symbols
@@ -1086,7 +1100,8 @@ export default function App() {
     // If text is provided, update the last speakable text
     if (text) setLastSpeakableText(text);
     
-    if (forceInterrupt) {
+    // Always cancel before speaking if forceInterrupt is true or if already speaking
+    if (forceInterrupt || isSpeaking) {
       window.speechSynthesis.cancel();
     }
     
@@ -1104,39 +1119,59 @@ export default function App() {
     const targetLang = voiceLangs[language] || 'en-IN';
     const allVoices = window.speechSynthesis.getVoices();
     
-    // Sort voices to put Google/natural/online ones first
-    const matchedVoices = [...allVoices]
-      .filter(v => v.lang === targetLang || v.lang.replace('_', '-').startsWith(language))
-      .sort((a, b) => {
-        // Priority: Online/Network/Premium > Google > Natural
-        const getPriority = (v: SpeechSynthesisVoice) => {
-          let p = 0;
-          if (v.name.includes('Online') || v.name.includes('Network') || v.name.includes('Premium')) p += 10;
-          if (v.name.includes('Google')) p += 5;
-          if (v.name.includes('Natural')) p += 3;
-          return p;
-        };
-        return getPriority(b) - getPriority(a);
-      });
+    // Find all available voices for the target language
+    const availableVoices = allVoices.filter(v => 
+      v.lang === targetLang || v.lang.replace('_', '-').startsWith(language)
+    );
     
-    // Check if we have a real regional voice
-    const hasLocalVoice = matchedVoices.length > 0;
+    let selectedVoice: SpeechSynthesisVoice | null = null;
+    const preferredNames = PREFERRED_VOICES[language] || [];
+
+    // 1. Try to find a voice matching our preferred list exactly or by partial match
+    for (const prefName of preferredNames) {
+      const found = availableVoices.find(v => v.name.includes(prefName));
+      if (found) {
+        selectedVoice = found;
+        break;
+      }
+    }
+
+    // 2. If no preferred voice, fallback to any Google/Network voice
+    if (!selectedVoice) {
+      selectedVoice = availableVoices.find(v => 
+        v.name.includes('Google') || v.name.includes('Online') || v.name.includes('Network')
+      ) || null;
+    }
+
+    // 3. Last fallback: any voice for that language
+    if (!selectedVoice && availableVoices.length > 0) {
+      selectedVoice = availableVoices[0];
+    }
+
+    // Check if we have a real regional voice (not a robotic fallback)
+    const isQualityVoice = selectedVoice && (
+      selectedVoice.name.includes('Google') || 
+      selectedVoice.name.includes('Neural') || 
+      selectedVoice.name.includes('Wavenet') ||
+      selectedVoice.name.includes('Online')
+    );
     
-    // Prepare text: Transliterate ONLY if we DON'T have a local voice and it's a Devanagari language
-    const cleanText = prepareTextForSpeech(textToRead, language, !hasLocalVoice);
+    // Prepare text: Transliterate ONLY if we DON'T have a quality local voice
+    const cleanText = prepareTextForSpeech(textToRead, language, !isQualityVoice);
     if (!cleanText) return;
 
     const utterance = new SpeechSynthesisUtterance(cleanText);
     
-    if (hasLocalVoice) {
-      utterance.lang = targetLang;
-      utterance.voice = matchedVoices[0];
+    if (selectedVoice) {
+      utterance.voice = selectedVoice;
+      utterance.lang = selectedVoice.lang;
+      console.log(`[TTS] Selected Voice: ${selectedVoice.name} (${selectedVoice.lang})`);
     }
 
-    // Natural tone adjustments for a warmer, humanistic feel
-    // Slower rates (0.9 - 0.95) usually sound much less robotic
-    utterance.rate = language === 'hi' ? 0.92 : 0.95; 
-    utterance.pitch = 1.02; // Slightly higher pitch for a friendlier tone
+    // Dynamic Tone Adjustments
+    // Hindi/Regional: Slower (0.9) is better. English: 1.0 is fine.
+    utterance.rate = language === 'en' ? 1.0 : 0.88; 
+    utterance.pitch = 1.05; // Slightly higher for warmth
     
     utterance.onstart = () => setIsSpeaking(true);
     utterance.onend = () => setIsSpeaking(false);
