@@ -167,3 +167,22 @@ export const enhanceImageQuality = async (base64Image: string) => {
     reason: text
   };
 };
+
+export const generateEmbedding = async (text: string) => {
+  try {
+    const model = ai.getGenerativeModel({ model: "text-embedding-004" });
+    const result = await model.embedContent(text);
+    return result.embedding.values;
+  } catch (error) {
+    console.error("Embedding failed:", error);
+    return null;
+  }
+};
+
+export const cosineSimilarity = (vecA: number[], vecB: number[]) => {
+  const dotProduct = vecA.reduce((sum, val, i) => sum + val * vecB[i], 0);
+  const magnitudeA = Math.sqrt(vecA.reduce((sum, val) => sum + val * val, 0));
+  const magnitudeB = Math.sqrt(vecB.reduce((sum, val) => sum + val * val, 0));
+  if (magnitudeA === 0 || magnitudeB === 0) return 0;
+  return dotProduct / (magnitudeA * magnitudeB);
+};

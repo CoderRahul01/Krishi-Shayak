@@ -39,7 +39,7 @@ import {
   CloudRain
 } from 'lucide-react';
 import { useFirebase } from './components/FirebaseProvider';
-import { analyzePlantImage, chatWithExpert, enhanceImageQuality, getAIPoweredWeather } from './services/geminiService';
+import { analyzePlantImage, chatWithExpert, enhanceImageQuality, getAIPoweredWeather, generateEmbedding, cosineSimilarity } from './services/geminiService';
 import { transliterateDevanagari } from './lib/transliterator';
 import { compressImage } from './lib/utils';
 // import { fetchWeather, WeatherData, fetchWeatherByCity } from './services/weatherService';
@@ -1030,11 +1030,45 @@ export default function App() {
     setChatFilePreview(null);
 
     try {
+      // --- Semantic Search for Context Enhancement ---
+      let semanticContext = "";
+      if (history.length > 0) {
+        try {
+          const userMessageEmbedding = await generateEmbedding(messageText);
+          if (userMessageEmbedding) {
+            let bestSimilarity = -1;
+            let bestReport = null;
+
+            // Search through reports for semantic similarity
+            for (const report of history) {
+              const reportText = `${report.plantName} ${report.detectionResult} ${report.explanation}`;
+              // We embed the report on-the-fly for this demonstration. 
+              // In production, you'd store the embedding in Firestore with the report.
+              const reportEmbedding = await generateEmbedding(reportText);
+              if (reportEmbedding) {
+                const similarity = cosineSimilarity(userMessageEmbedding, reportEmbedding);
+                if (similarity > bestSimilarity) {
+                  bestSimilarity = similarity;
+                  bestReport = report;
+                }
+              }
+            }
+
+            if (bestReport && bestSimilarity > 0.65) {
+              semanticContext = `Relevant past issue found: On ${new Date(bestReport.timestamp.seconds * 1000).toLocaleDateString()}, we detected ${bestReport.issueDetected} on your ${bestReport.plantName}. This might be related.`;
+            }
+          }
+        } catch (semError) {
+          console.warn("Semantic search skipped:", semError);
+        }
+      }
+
       const extraContext = `
         Current Location: ${weather?.locationName || manualLocation}
         Weather: ${weather ? `${weather.temp}°C, ${weather.condition}, Humidity: ${weather.humidity}%` : 'Unknown'}
         Agricultural Risk: ${weather?.riskLevel || 'Unknown'}
         Last Detection: ${detectionResult ? `${detectionResult.plantName} - ${detectionResult.issueDetected}` : 'None'}
+        ${semanticContext}
       `;
       
       const response = await chatWithExpert(currentMessages, messageText, language, imageToSend, extraContext);
@@ -1070,15 +1104,19 @@ export default function App() {
     const targetLang = voiceLangs[language] || 'en-IN';
     const allVoices = window.speechSynthesis.getVoices();
     
-    // Sort voices to put Google/natural ones first
+    // Sort voices to put Google/natural/online ones first
     const matchedVoices = [...allVoices]
       .filter(v => v.lang === targetLang || v.lang.replace('_', '-').startsWith(language))
       .sort((a, b) => {
-        const aGoogle = a.name.includes('Google');
-        const bGoogle = b.name.includes('Google');
-        if (aGoogle && !bGoogle) return -1;
-        if (!aGoogle && bGoogle) return 1;
-        return 0;
+        // Priority: Online/Network/Premium > Google > Natural
+        const getPriority = (v: SpeechSynthesisVoice) => {
+          let p = 0;
+          if (v.name.includes('Online') || v.name.includes('Network') || v.name.includes('Premium')) p += 10;
+          if (v.name.includes('Google')) p += 5;
+          if (v.name.includes('Natural')) p += 3;
+          return p;
+        };
+        return getPriority(b) - getPriority(a);
       });
     
     // Check if we have a real regional voice
@@ -1092,16 +1130,13 @@ export default function App() {
     
     if (hasLocalVoice) {
       utterance.lang = targetLang;
-      // Preference: Google -> Natural -> Any matched
-      let selectedVoice = matchedVoices.find(v => v.name.includes('Google')) ||
-                         matchedVoices.find(v => v.name.includes('Natural')) ||
-                         matchedVoices[0];
-      if (selectedVoice) utterance.voice = selectedVoice;
+      utterance.voice = matchedVoices[0];
     }
 
-    // Natural tone adjustments for a friendlier feel
-    utterance.rate = language === 'hi' ? 1.0 : 1.0; // Fast enough as requested
-    utterance.pitch = 1.0; 
+    // Natural tone adjustments for a warmer, humanistic feel
+    // Slower rates (0.9 - 0.95) usually sound much less robotic
+    utterance.rate = language === 'hi' ? 0.92 : 0.95; 
+    utterance.pitch = 1.02; // Slightly higher pitch for a friendlier tone
     
     utterance.onstart = () => setIsSpeaking(true);
     utterance.onend = () => setIsSpeaking(false);
