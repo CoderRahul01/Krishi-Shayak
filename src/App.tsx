@@ -1094,37 +1094,15 @@ export default function App() {
     setChatFilePreview(null);
 
     try {
-      // --- Semantic Search for Context Enhancement ---
-      let semanticContext = "";
+      // --- Context Enhancement from Recent History ---
+      // Instead of client-side embedding search which is slow and hits quotas,
+      // we provide a concise summary of the last 3 reports for the AI to reason about.
+      let historyContext = "";
       if (history.length > 0) {
-        try {
-          const userMessageEmbedding = await generateEmbedding(messageText);
-          if (userMessageEmbedding) {
-            let bestSimilarity = -1;
-            let bestReport = null;
-
-            // Search through reports for semantic similarity
-            for (const report of history) {
-              const reportText = `${report.plantName} ${report.detectionResult} ${report.explanation}`;
-              // We embed the report on-the-fly for this demonstration. 
-              // In production, you'd store the embedding in Firestore with the report.
-              const reportEmbedding = await generateEmbedding(reportText);
-              if (reportEmbedding) {
-                const similarity = cosineSimilarity(userMessageEmbedding, reportEmbedding);
-                if (similarity > bestSimilarity) {
-                  bestSimilarity = similarity;
-                  bestReport = report;
-                }
-              }
-            }
-
-            if (bestReport && bestSimilarity > 0.65) {
-              semanticContext = `Relevant past issue found: On ${new Date(bestReport.timestamp.seconds * 1000).toLocaleDateString()}, we detected ${bestReport.issueDetected} on your ${bestReport.plantName}. This might be related.`;
-            }
-          }
-        } catch (semError) {
-          console.warn("Semantic search skipped:", semError);
-        }
+        const recentReports = history.slice(0, 3).map(r => 
+          `- ${new Date(r.timestamp.seconds * 1000).toLocaleDateString()}: Detected ${r.issueDetected} on ${r.plantName}`
+        ).join('\n');
+        historyContext = `\nRecent Activity History:\n${recentReports}`;
       }
 
       const extraContext = `
@@ -1133,15 +1111,20 @@ export default function App() {
         Weather: ${weather ? `${weather.temp}°C, ${weather.condition}, Humidity: ${weather.humidity}%` : 'Unknown'}
         Agricultural Risk: ${weather?.riskLevel || 'Unknown'}
         Last Detection: ${detectionResult ? `${detectionResult.plantName} - ${detectionResult.issueDetected}` : 'None'}
-        ${semanticContext}
+        ${historyContext}
       `;
       
+      console.log("[Chat] Sending message with context:", extraContext);
       const response = await chatWithExpert(currentMessages, messageText, language, imageToSend, extraContext);
+      
+      if (!response) throw new Error("No response from AI expert.");
+
       setChatMessages([...newMessages, { role: 'model' as const, text: response }]);
       setLastSpeakableText(response);
       speak(response);
-    } catch (error) {
-      alert("Failed to send message.");
+    } catch (error: any) {
+      console.error("[Chat] Send failed:", error);
+      alert(`Failed to send message: ${error.message || 'Unknown error'}`);
     }
   };
 

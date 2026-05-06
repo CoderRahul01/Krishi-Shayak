@@ -1,6 +1,20 @@
 import { GoogleGenAI, Type } from "@google/genai";
 
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
+// Use process.env (defined in vite.config.ts) or import.meta.env
+const getApiKey = () => {
+  if (typeof process !== 'undefined' && process.env?.GEMINI_API_KEY) return process.env.GEMINI_API_KEY;
+  if (import.meta.env.VITE_GEMINI_API_KEY) return import.meta.env.VITE_GEMINI_API_KEY;
+  // Fallback to a common pattern if both fail
+  return (window as any).process?.env?.GEMINI_API_KEY || '';
+};
+
+const API_KEY = getApiKey();
+
+if (!API_KEY) {
+  console.warn("CRITICAL: Gemini API Key is missing! Chat and analysis will fail.");
+}
+
+const ai = new GoogleGenAI(API_KEY);
 
 const languageNames: Record<string, string> = {
   en: 'English',
@@ -85,7 +99,7 @@ export const chatWithExpert = async (history: { role: 'user' | 'model', text: st
       CRITICAL FOR VOICE DELIVERY (HUMANISTIC MODE):
       - DO NOT use any markdown, bolding (**), or bullet points (* or -).
       - NEVER provide lists in a vertical format. Instead of "1. Do X, 2. Do Y", say "First, I would suggest you do X... and then, you might want to try Y."
-      - Use ellipses (...) and commas frequently to create natural breathing pauses.
+      - Use commas, periods, and ellipses (...) frequently to create natural breathing pauses.
       - You MUST respond ENTIRELY in ${langName}. 
       - Use local farming terminology where appropriate to sound natural to a farmer.
       
@@ -115,7 +129,17 @@ export const chatWithExpert = async (history: { role: 'user' | 'model', text: st
     }
   });
 
-  return response.text;
+    const result = await model.generateContent({ contents });
+    const responseText = result.response.text();
+    if (!responseText) throw new Error("Empty response from AI expert.");
+    return responseText;
+  } catch (error: any) {
+    console.error("Chat failed:", error);
+    if (error.message?.includes('429')) {
+      return "I'm a little busy helping other farmers right now. Could you please wait a minute and ask me again? I want to give you my full attention.";
+    }
+    return "I'm sorry, I'm having a little trouble connecting to my knowledge base. Can we try again in a moment?";
+  }
 };
 
 export const getAIPoweredWeather = async (location: string, language: string = 'en') => {
@@ -197,39 +221,38 @@ export const cosineSimilarity = (vecA: number[], vecB: number[]) => {
   const magnitudeB = Math.sqrt(vecB.reduce((sum, val) => sum + val * val, 0));
   if (magnitudeA === 0 || magnitudeB === 0) return 0;
   return dotProduct / (magnitudeA * magnitudeB);
-  };
+};
 
-  /**
-  * Generates a sentient briefing of the app's current state.
-  * This is used for the "Read Aloud" button to give a conversational overview 
-  * of the farmer's world, not just a transcript read.
-  */
-  export const getAppSentientBriefing = async (state: any, language: string = 'en') => {
+/**
+ * Generates a sentient briefing of the app's current state.
+ * This is used for the "Read Aloud" button to give a conversational overview 
+ * of the farmer's world, not just a transcript read.
+ */
+export const getAppSentientBriefing = async (state: any, language: string = 'en') => {
   const langName = languageNames[language] || 'English';
   const prompt = `You are Krishi Shayak, a sentient farming companion. 
   Look at the current state of the farmer's dashboard and provide a warm, humanistic briefing.
-
+  
   CURRENT STATE:
   - User: ${state.userName}
   - Location: ${state.location}
   - Weather: ${state.weather?.temp}°C, ${state.weather?.condition}
   - Risk Level: ${state.weather?.riskLevel}
   - Recent History: ${state.recentDetection ? `Last detected ${state.recentDetection.issue} on ${state.recentDetection.plant}` : 'No recent issues'}
-
+  
   TASK:
   Provide a 3-4 sentence warm overview as if you are standing next to them in the field. 
   Talk ABOUT the conditions, don't just list them. 
   Example: "Ah, ${state.userName}, it looks like a warm day in ${state.location}..."
-
+  
   CRITICAL: Respond ENTIRELY in ${langName}. No markdown. No bullets. Use commas and ellipses for natural breath.`;
 
   try {
-  const model = ai.getGenerativeModel({ model: "gemini-1.5-flash" });
-  const response = await model.generateContent(prompt);
-  return response.response.text();
+    const model = ai.getGenerativeModel({ model: "gemini-1.5-flash" });
+    const response = await model.generateContent(prompt);
+    return response.response.text();
   } catch (error) {
-  console.error("Sentient briefing failed:", error);
-  return "I'm looking at your farm data right now... everything seems to be in order.";
+    console.error("Sentient briefing failed:", error);
+    return "I'm looking at your farm data right now... everything seems to be in order.";
   }
-  };
-
+};
