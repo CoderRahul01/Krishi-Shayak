@@ -43,46 +43,41 @@ export const analyzePlantImage = async (base64Image: string, language: string = 
     IMPORTANT: You MUST provide all text descriptions, plant names, and treatment details in ${langName}.
   `;
 
-  try {
-    const model = ai.getGenerativeModel({ model: "gemini-1.5-flash" });
-    const response = await model.generateContent({
-      contents: [
-        {
-          parts: [
-            { text: prompt },
-            { inlineData: { data: base64Image, mimeType: "image/jpeg" } }
-          ]
-        }
-      ],
-      generationConfig: {
-        systemInstruction: "You are a senior agricultural scientist specializing in Indian crops and pests. Your advice must be based on reputable research papers (e.g., ICAR, IARI) and scientifically proven methods suitable for the Indian climate and soil conditions.",
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            plantName: { type: Type.STRING },
-            issueDetected: { type: Type.STRING },
-            confidence: { type: Type.NUMBER },
-            explanation: { type: Type.STRING },
-            treatments: {
-              type: Type.OBJECT,
-              properties: {
-                organic: { type: Type.STRING },
-                chemical: { type: Type.STRING }
-              },
-              required: ["organic", "chemical"]
-            }
-          },
-          required: ["plantName", "issueDetected", "confidence", "explanation", "treatments"]
-        }
+  const response = await ai.models.generateContent({
+    model: "gemini-3-flash-preview",
+    contents: [
+      {
+        parts: [
+          { text: prompt },
+          { inlineData: { data: base64Image, mimeType: "image/jpeg" } }
+        ]
       }
-    });
+    ],
+    config: {
+      systemInstruction: "You are a senior agricultural scientist specializing in Indian crops and pests. Your advice must be based on reputable research papers (e.g., ICAR, IARI) and scientifically proven methods suitable for the Indian climate and soil conditions.",
+      responseMimeType: "application/json",
+      responseSchema: {
+        type: Type.OBJECT,
+        properties: {
+          plantName: { type: Type.STRING },
+          issueDetected: { type: Type.STRING },
+          confidence: { type: Type.NUMBER },
+          explanation: { type: Type.STRING },
+          treatments: {
+            type: Type.OBJECT,
+            properties: {
+              organic: { type: Type.STRING },
+              chemical: { type: Type.STRING }
+            },
+            required: ["organic", "chemical"]
+          }
+        },
+        required: ["plantName", "issueDetected", "confidence", "explanation", "treatments"]
+      }
+    }
+  });
 
-    return JSON.parse(response.response.text() || '{}');
-  } catch (error) {
-    console.error("Image Analysis failed:", error);
-    return {};
-  }
+  return JSON.parse(response.text || '{}');
 };
 
 export const chatWithExpert = async (history: { role: 'user' | 'model', text: string }[], message: string, language: string = 'en', base64Image?: string, extraContext?: string) => {
@@ -125,12 +120,14 @@ export const chatWithExpert = async (history: { role: 'user' | 'model', text: st
     parts: userParts
   });
 
-  try {
-    const model = ai.getGenerativeModel({ 
-      model: "gemini-1.5-flash",
-      systemInstruction: systemInstruction,
+  const response = await ai.models.generateContent({
+    model: "gemini-3-flash-preview",
+    contents,
+    config: {
+      systemInstruction,
       tools: [{ googleSearch: {} } as any]
-    });
+    }
+  });
 
     const result = await model.generateContent({ contents });
     const responseText = result.response.text();
@@ -160,61 +157,51 @@ export const getAIPoweredWeather = async (location: string, language: string = '
   - irrigationAdvice (advice in ${langName})
   - sprayingAlert (advice in ${langName})`;
 
-  try {
-    const model = ai.getGenerativeModel({ 
-      model: "gemini-1.5-flash",
+  const result = await ai.models.generateContent({
+    model: "gemini-3-flash-preview",
+    contents: [{ parts: [{ text: prompt }] }],
+    config: {
       tools: [{ googleSearch: {} } as any],
-      generationConfig: {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            temp: { type: Type.NUMBER },
-            condition: { type: Type.STRING },
-            humidity: { type: Type.NUMBER },
-            windSpeed: { type: Type.NUMBER },
-            locationName: { type: Type.STRING },
-            riskLevel: { type: Type.STRING },
-            farmingSuggestion: { type: Type.STRING },
-            irrigationAdvice: { type: Type.STRING },
-            sprayingAlert: { type: Type.STRING }
-          },
-          required: ["temp", "condition", "humidity", "windSpeed", "locationName", "riskLevel", "farmingSuggestion", "irrigationAdvice", "sprayingAlert"]
-        }
+      responseMimeType: "application/json",
+      responseSchema: {
+        type: Type.OBJECT,
+        properties: {
+          temp: { type: Type.NUMBER },
+          condition: { type: Type.STRING },
+          humidity: { type: Type.NUMBER },
+          windSpeed: { type: Type.NUMBER },
+          locationName: { type: Type.STRING },
+          riskLevel: { type: Type.STRING },
+          farmingSuggestion: { type: Type.STRING },
+          irrigationAdvice: { type: Type.STRING },
+          sprayingAlert: { type: Type.STRING }
+        },
+        required: ["temp", "condition", "humidity", "windSpeed", "locationName", "riskLevel", "farmingSuggestion", "irrigationAdvice", "sprayingAlert"]
       }
-    });
+    }
+  });
 
-    const result = await model.generateContent(prompt);
-    return JSON.parse(result.response.text() || '{}');
-  } catch (error) {
-    console.error("Weather insights failed:", error);
-    return null;
-  }
+  return JSON.parse(result.text || '{}');
 };
 
 export const enhanceImageQuality = async (base64Image: string) => {
-  try {
-    const model = ai.getGenerativeModel({ model: "gemini-1.5-flash" });
-    const response = await model.generateContent({
-      contents: [
-        {
-          parts: [
-            { text: "Is this image clear enough for agricultural disease detection? Respond with 'YES' or 'NO' and a reason." },
-            { inlineData: { data: base64Image, mimeType: "image/jpeg" } }
-          ]
-        }
-      ]
-    });
+  const response = await ai.models.generateContent({
+    model: "gemini-3-flash-preview",
+    contents: [
+      {
+        parts: [
+          { text: "Is this image clear enough for agricultural disease detection? Respond with 'YES' or 'NO' and a reason." },
+          { inlineData: { data: base64Image, mimeType: "image/jpeg" } }
+        ]
+      }
+    ]
+  });
 
-    const text = response.response.text() || '';
-    return {
-      isUsable: text.toUpperCase().includes('YES'),
-      reason: text
-    };
-  } catch (error) {
-    console.error("Quality check failed:", error);
-    return { isUsable: true, reason: "" }; // Fallback to skip check
-  }
+  const text = response.text || '';
+  return {
+    isUsable: text.toUpperCase().includes('YES'),
+    reason: text
+  };
 };
 
 export const generateEmbedding = async (text: string) => {
