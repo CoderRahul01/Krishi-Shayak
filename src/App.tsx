@@ -1114,21 +1114,30 @@ export default function App() {
     }
   };
 
-  const speak = (text?: string, forceInterrupt: boolean = false) => {
+  const speak = async (text?: string, forceInterrupt: boolean = false) => {
     if (!('speechSynthesis' in window)) return;
     
     // If text is provided, update the last speakable text
     if (text) setLastSpeakableText(text);
     
-    // Always cancel before speaking if forceInterrupt is true or if already speaking
-    if (forceInterrupt || isSpeaking) {
+    // Always cancel before speaking if forceInterrupt is true
+    if (forceInterrupt) {
       window.speechSynthesis.cancel();
+      // Small delay to ensure clear state
+      await new Promise(r => setTimeout(r, 50));
     }
     
     if (!isVoiceEnabled && !forceInterrupt) return;
     
     const textToRead = text || lastSpeakableText;
     if (!textToRead) return;
+
+    // Ensure voices are loaded (some browsers need this check)
+    if (window.speechSynthesis.getVoices().length === 0) {
+      await new Promise((resolve) => {
+        window.speechSynthesis.onvoiceschanged = () => resolve(true);
+      });
+    }
 
     const voiceLangs: Record<string, string> = {
       hi: 'hi-IN', mr: 'mr-IN', te: 'te-IN', ta: 'ta-IN',
@@ -1138,8 +1147,6 @@ export default function App() {
     
     const targetLang = voiceLangs[language] || 'en-IN';
     const allVoices = window.speechSynthesis.getVoices();
-    
-    // Find all available voices for the target language
     const availableVoices = allVoices.filter(v => 
       v.lang === targetLang || v.lang.replace('_', '-').startsWith(language)
     );
@@ -1147,7 +1154,6 @@ export default function App() {
     let selectedVoice: SpeechSynthesisVoice | null = null;
     const preferredNames = PREFERRED_VOICES[language] || [];
 
-    // 1. Try to find a voice matching our preferred list exactly or by partial match
     for (const prefName of preferredNames) {
       const found = availableVoices.find(v => v.name.includes(prefName));
       if (found) {
@@ -1156,19 +1162,12 @@ export default function App() {
       }
     }
 
-    // 2. If no preferred voice, fallback to any Google/Network voice
     if (!selectedVoice) {
       selectedVoice = availableVoices.find(v => 
-        v.name.includes('Google') || v.name.includes('Online') || v.name.includes('Network')
-      ) || null;
+        v.name.includes('Google') || v.name.includes('Online') || v.name.includes('Network') || v.name.includes('Neural')
+      ) || availableVoices[0] || null;
     }
 
-    // 3. Last fallback: any voice for that language
-    if (!selectedVoice && availableVoices.length > 0) {
-      selectedVoice = availableVoices[0];
-    }
-
-    // Check if we have a real regional voice (not a robotic fallback)
     const isQualityVoice = selectedVoice && (
       selectedVoice.name.includes('Google') || 
       selectedVoice.name.includes('Neural') || 
@@ -1176,32 +1175,61 @@ export default function App() {
       selectedVoice.name.includes('Online')
     );
     
-    // Prepare text: Transliterate ONLY if we DON'T have a quality local voice
     const cleanText = prepareTextForSpeech(textToRead, language, !isQualityVoice);
     if (!cleanText) return;
 
-    const utterance = new SpeechSynthesisUtterance(cleanText);
+    // --- Smart Prosody: Chunked Delivery ---
+    // Splitting text into smaller phrases (by commas, periods, ellipses) 
+    // and merging punctuation back to create natural "breathing" units.
+    const rawChunks = cleanText.split(/([,.!?;]|\.\.\.)/g);
+    const chunks: string[] = [];
+    for (let i = 0; i < rawChunks.length; i += 2) {
+      const phrase = rawChunks[i] || "";
+      const punct = rawChunks[i+1] || "";
+      if (phrase.trim() || punct.trim()) {
+        chunks.push((phrase + punct).trim());
+      }
+    }
     
-    if (selectedVoice) {
-      utterance.voice = selectedVoice;
-      utterance.lang = selectedVoice.lang;
-      console.log(`[TTS] Selected Voice: ${selectedVoice.name} (${selectedVoice.lang})`);
+    setIsSpeaking(true);
+
+    for (let i = 0; i < chunks.length; i++) {
+      // If user interrupted during chunked playback
+      if (!window.speechSynthesis.speaking && i > 0 && forceInterrupt === false) break;
+
+      const chunk = chunks[i];
+      if (!chunk) continue;
+
+      const utterance = new SpeechSynthesisUtterance(chunk);
+      if (selectedVoice) {
+        utterance.voice = selectedVoice;
+        utterance.lang = selectedVoice.lang;
+      }
+
+      // Humanistic Prosody: Slightly vary rate and pitch to avoid "metronome" effect
+      const baseRate = language === 'en' ? 0.98 : 0.88;
+      const variation = (Math.random() * 0.04) - 0.02; // +/- 2% variation
+      
+      utterance.rate = baseRate + variation;
+      utterance.pitch = 1.05 + (Math.random() * 0.05); // Warmth with slight variation
+      
+      // Artificial "Breath" Gap: Longer pause after periods, shorter after commas
+      const isEnding = /[.!?]/.test(chunk);
+      const gap = isEnding ? 400 : 150;
+
+      await new Promise((resolve) => {
+        utterance.onend = () => {
+          setTimeout(resolve, gap);
+        };
+        utterance.onerror = (e) => {
+          console.error("TTS Chunk Error:", e);
+          resolve(false);
+        };
+        window.speechSynthesis.speak(utterance);
+      });
     }
 
-    // Dynamic Tone Adjustments
-    // Hindi/Regional: Slower (0.9) is better. English: 1.0 is fine.
-    utterance.rate = language === 'en' ? 1.0 : 0.88; 
-    utterance.pitch = 1.05; // Slightly higher for warmth
-    
-    utterance.onstart = () => setIsSpeaking(true);
-    utterance.onend = () => setIsSpeaking(false);
-    utterance.onerror = (e) => {
-      console.error("SpeechSynthesis error:", e);
-      setIsSpeaking(false);
-    };
-    
-    currentUtteranceRef.current = utterance;
-    window.speechSynthesis.speak(utterance);
+    setIsSpeaking(false);
   };
 
   const toggleVoice = () => {
@@ -2591,7 +2619,10 @@ export default function App() {
                 onClick={() => {
                   setIsOnboarded(true);
                   if (user) localStorage.setItem(`onboarded_${user.uid}`, 'true');
-                  speak(`${t.welcome}. ${t.onboarding1} ${t.onboarding2} ${t.onboarding3}`);
+                  const welcomeMsg = language === 'hi' ? 
+                    `नमस्ते! मैं हूँ आपका कृषि सहायक। मैं आपकी फसलों की बीमारियों को पहचानने, आपको मौसम की जानकारी देने और खेती के लिए सही सलाह देने में आपकी मदद करूँगा। चलिए शुरू करते हैं!` :
+                    `Hello! I am Krishi Shayak, your personal farming assistant. I am here to help you identify plant diseases, give you weather updates, and provide expert farming advice. Let's get started!`;
+                  speak(welcomeMsg);
                 }}
                 className="w-full py-4 bg-green-600 text-white rounded-xl font-bold hover:bg-green-700 transition-colors shadow-lg shadow-green-200"
               >
