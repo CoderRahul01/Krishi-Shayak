@@ -28,6 +28,15 @@ export const analyzePlantImage = async (base64Image: string, language: string = 
   }
 };
 
+export const analyzeCrop = async (data: { cropType: string; soilType: string; season?: string; region?: string }, language: string = "en") => {
+  try {
+    return await apiFetch("/api/crop-analysis", { ...data, language });
+  } catch (error) {
+    console.error("Crop Analysis failed:", error);
+    return null;
+  }
+};
+
 export const chatWithExpert = async (
   history: { role: "user" | "model"; text: string }[],
   message: string,

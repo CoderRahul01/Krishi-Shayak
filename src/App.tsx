@@ -39,7 +39,7 @@ import {
   CloudRain
 } from 'lucide-react';
 import { useFirebase } from './components/FirebaseProvider';
-import { analyzePlantImage, chatWithExpert, enhanceImageQuality, getAIPoweredWeather, generateEmbedding, cosineSimilarity, getAppSentientBriefing } from './services/geminiService';
+import { analyzePlantImage, analyzeCrop, chatWithExpert, enhanceImageQuality, getAIPoweredWeather, generateEmbedding, cosineSimilarity, getAppSentientBriefing } from './services/geminiService';
 import { transliterateDevanagari } from './lib/transliterator';
 import { compressImage } from './lib/utils';
 import { agriVoice } from './services/voiceService';
@@ -48,7 +48,7 @@ import ReactMarkdown from 'react-markdown';
 import { collection, addDoc, query, where, orderBy, onSnapshot, Timestamp, getDocFromServer, doc, deleteDoc } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from './lib/firebase';
 
-type Tab = 'dashboard' | 'detect' | 'chat' | 'history' | 'settings';
+type Tab = 'dashboard' | 'detect' | 'analysis' | 'chat' | 'history' | 'settings';
 
 // Helper to strip markdown and prepare text for TTS
 const AGRI_PHONETIC_MAP: Record<string, Record<string, string>> = {
@@ -151,6 +151,12 @@ export default function App() {
   const [weather, setWeather] = useState<WeatherData | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [detectionResult, setDetectionResult] = useState<any>(null);
+  const [analysisCropType, setAnalysisCropType] = useState('');
+  const [analysisSoilType, setAnalysisSoilType] = useState('');
+  const [analysisSeason, setAnalysisSeason] = useState('');
+  const [analysisRegion, setAnalysisRegion] = useState('');
+  const [isAnalyzingCrop, setIsAnalyzingCrop] = useState(false);
+  const [cropAnalysisResult, setCropAnalysisResult] = useState<any>(null);
   const [chatMessages, setChatMessages] = useState<{ role: 'user' | 'model', text: string }[]>([]);
   const [history, setHistory] = useState<any[]>([]);
   const [isSpeaking, setIsSpeaking] = useState(false);
@@ -292,6 +298,16 @@ export default function App() {
       listening: "Listening...",
       helloFarmer: "Hello, Farmer! I'm your AI assistant. How can I help you today?",
       dashboard: "Dashboard",
+      cropAnalysis: "Crop Analysis",
+      cropType: "Crop Type",
+      soilType: "Soil Type",
+      season: "Season",
+      region: "Region",
+      analyze: "Analyze",
+      estimatedYield: "Estimated Yield",
+      nutrientRequirements: "Nutrient Requirements",
+      riskFactors: "Risk Factors",
+      bestPractices: "Best Practices",
       settings: "Settings",
       profile: "Farmer Profile",
       location: "Location",
@@ -1229,6 +1245,7 @@ export default function App() {
                 <nav className="space-y-2">
                   <div onClick={() => { setActiveTab('dashboard'); setIsSidebarOpen(false); }} className={`sidebar-item ${activeTab === 'dashboard' ? 'sidebar-item-active' : ''}`}><LayoutDashboard /> {t.dashboard}</div>
                   <div onClick={() => { setActiveTab('detect'); setIsSidebarOpen(false); }} className={`sidebar-item ${activeTab === 'detect' ? 'sidebar-item-active' : ''}`}><Camera /> {t.scan}</div>
+                  <div onClick={() => { setActiveTab('analysis'); setIsSidebarOpen(false); }} className={`sidebar-item ${activeTab === 'analysis' ? 'sidebar-item-active' : ''}`}><Sprout /> {t.cropAnalysis || 'Crop Analysis'}</div>
                   <div onClick={() => { setActiveTab('chat'); setIsSidebarOpen(false); }} className={`sidebar-item ${activeTab === 'chat' ? 'sidebar-item-active' : ''}`}><Bot /> {t.expert}</div>
                   <div onClick={() => { setActiveTab('history'); setIsSidebarOpen(false); }} className={`sidebar-item ${activeTab === 'history' ? 'sidebar-item-active' : ''}`}><History /> {t.history}</div>
                   <div onClick={() => { setActiveTab('settings'); setIsSidebarOpen(false); }} className={`sidebar-item ${activeTab === 'settings' ? 'sidebar-item-active' : ''}`}><Settings /> {t.settings}</div>
@@ -1865,6 +1882,69 @@ export default function App() {
             </motion.div>
           )}
 
+          {activeTab === 'analysis' && (
+            <motion.div 
+              key="analysis"
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="dashboard-container space-y-6"
+            >
+              <div className="bento-card p-8">
+                <div className="flex items-center gap-3 mb-6">
+                  <div className="w-12 h-12 bg-[#f0f4ef] rounded-xl flex items-center justify-center">
+                    <Sprout className="w-6 h-6 text-primary" />
+                  </div>
+                  <div>
+                    <h2 className="text-2xl font-bold">{t.cropAnalysis || 'Crop Analysis'}</h2>
+                    <p className="text-muted">Enter details for comprehensive AI insights</p>
+                  </div>
+                </div>
+
+                <div className="space-y-4">
+                  <input type="text" placeholder={t.cropType || "Crop Type (e.g., Wheat, Rice)"} className="w-full p-4 rounded-xl border border-border bg-[#f8faf8]" value={analysisCropType} onChange={e => setAnalysisCropType(e.target.value)} />
+                  <input type="text" placeholder={t.soilType || "Soil Type (e.g., Clay, Sandy)"} className="w-full p-4 rounded-xl border border-border bg-[#f8faf8]" value={analysisSoilType} onChange={e => setAnalysisSoilType(e.target.value)} />
+                  <input type="text" placeholder={t.season || "Season (e.g., Kharif, Rabi)"} className="w-full p-4 rounded-xl border border-border bg-[#f8faf8]" value={analysisSeason} onChange={e => setAnalysisSeason(e.target.value)} />
+                  <input type="text" placeholder={t.region || "Region"} className="w-full p-4 rounded-xl border border-border bg-[#f8faf8]" value={analysisRegion} onChange={e => setAnalysisRegion(e.target.value)} />
+                  
+                  <button 
+                    onClick={async () => {
+                      setIsAnalyzingCrop(true);
+                      const result = await analyzeCrop({ cropType: analysisCropType, soilType: analysisSoilType, season: analysisSeason, region: analysisRegion }, language);
+                      setCropAnalysisResult(result);
+                      setIsAnalyzingCrop(false);
+                    }}
+                    disabled={isAnalyzingCrop || !analysisCropType || !analysisSoilType}
+                    className="w-full py-4 bg-primary text-white font-bold rounded-xl disabled:opacity-50"
+                  >
+                    {isAnalyzingCrop ? (t.analyzing || "Analyzing...") : (t.analyze || "Analyze")}
+                  </button>
+                </div>
+              </div>
+
+              {cropAnalysisResult && (
+                <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="space-y-4 pb-20">
+                  <div className="bento-card p-6">
+                    <h3 className="font-bold text-lg mb-2 text-primary">{t.estimatedYield || "Estimated Yield"}</h3>
+                    <p>{cropAnalysisResult.estimatedYield}</p>
+                  </div>
+                  <div className="bento-card p-6">
+                    <h3 className="font-bold text-lg mb-2 text-primary">{t.nutrientRequirements || "Nutrient Requirements"}</h3>
+                    <p>{cropAnalysisResult.nutrientRequirements}</p>
+                  </div>
+                  <div className="bento-card p-6 border border-error/20 bg-error/5">
+                    <h3 className="font-bold text-lg mb-2 text-error">{t.riskFactors || "Risk Factors"}</h3>
+                    <p>{cropAnalysisResult.riskFactors}</p>
+                  </div>
+                  <div className="bento-card p-6 bg-primary/5">
+                    <h3 className="font-bold text-lg mb-2 text-primary">{t.bestPractices || "Best Practices"}</h3>
+                    <p>{cropAnalysisResult.bestPractices}</p>
+                  </div>
+                </motion.div>
+              )}
+            </motion.div>
+          )}
+
           {activeTab === 'chat' && (
             <motion.div 
               key="chat"
@@ -2448,6 +2528,13 @@ export default function App() {
         >
           <Camera className={`w-6 h-6 ${activeTab === 'detect' ? 'fill-current' : ''}`} />
           <span className="text-[10px] font-bold uppercase tracking-wider">{t.scan}</span>
+        </button>
+        <button 
+          onClick={() => setActiveTab('analysis')}
+          className={`flex flex-col items-center gap-1 transition-colors ${activeTab === 'analysis' ? 'text-primary' : 'text-muted hover:text-primary'}`}
+        >
+          <Sprout className={`w-6 h-6 ${activeTab === 'analysis' ? 'fill-current' : ''}`} />
+          <span className="text-[10px] font-bold uppercase tracking-wider">{t.cropAnalysis || 'Analysis'}</span>
         </button>
         <button 
           onClick={() => setActiveTab('chat')}
