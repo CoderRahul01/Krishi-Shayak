@@ -24,7 +24,7 @@ export const analyzePlantImage = async (base64Image: string, language: string = 
     return await apiFetch("/api/analyze-image", { base64Image, language });
   } catch (error) {
     console.error("Image Analysis failed:", error);
-    return {};
+    return null;
   }
 };
 

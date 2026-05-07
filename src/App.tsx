@@ -1857,14 +1857,14 @@ export default function App() {
                         <Leaf className="w-5 h-5 text-primary" />
                         <h4 className="font-bold text-primary">{t.organicTreatment}</h4>
                       </div>
-                      <p className="text-sm text-text leading-relaxed">{detectionResult.treatments.organic}</p>
+                      <p className="text-sm text-text leading-relaxed">{detectionResult.treatments?.organic || 'Information unavailable'}</p>
                     </div>
                     <div className="bg-[#e3f2fd] rounded-2xl p-4">
                       <div className="flex items-center gap-2 mb-3">
                         <Bug className="w-5 h-5 text-[#1976d2]" />
                         <h4 className="font-bold text-[#1976d2]">{t.chemicalTreatment}</h4>
                       </div>
-                      <p className="text-sm text-text leading-relaxed">{detectionResult.treatments.chemical}</p>
+                      <p className="text-sm text-text leading-relaxed">{detectionResult.treatments?.chemical || 'Information unavailable'}</p>
                     </div>
                   </div>
 
