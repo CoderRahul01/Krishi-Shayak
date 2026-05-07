@@ -905,15 +905,15 @@ export default function App() {
       });
 
       if (result.issueDetected && result.explanation) {
-        const tr = result.treatments;
+        const tr = result.treatments || {};
         // Language-specific conversational structure
         const intro = language === 'hi' ? `मैंने फोटो का विश्लेषण किया है। आपके ${result.plantName} में ${result.issueDetected} की समस्या लग रही है।` : 
                       language === 'mr' ? `मी फोटोचे विश्लेषण केले आहे. तुमच्या ${result.plantName} मध्ये ${result.issueDetected} ची समस्या असल्याचे दिसून येत आहे.` :
                       `I've analyzed the photo. It looks like your ${result.plantName} has ${result.issueDetected}.`;
         
-        const treatmentInfo = language === 'hi' ? `जैविक उपचार के लिए, ${tr.organic}। रासायनिक विकल्प के लिए, ${tr.chemical}।` :
-                             language === 'mr' ? `सेंद्रिय उपचारासाठी, ${tr.organic}। रासायनिक पर्यायासाठी, ${tr.chemical}।` :
-                             `For organic treatment, you can try ${tr.organic}. For chemical options, ${tr.chemical}.`;
+        const treatmentInfo = language === 'hi' ? `जैविक उपचार के लिए, ${tr?.organic || 'उपलब्ध नहीं'}। रासायनिक विकल्प के लिए, ${tr?.chemical || 'उपलब्ध नहीं'}।` :
+                             language === 'mr' ? `सेंद्रिय उपचारासाठी, ${tr?.organic || 'उपलब्ध नाही'}। रासायनिक पर्यायासाठी, ${tr?.chemical || 'उपलब्ध नाही'}।` :
+                             `For organic treatment, you can try ${tr?.organic || 'Information unavailable'}. For chemical options, ${tr?.chemical || 'Information unavailable'}.`;
 
         const textToSpeak = `${intro} ${result.explanation} ${treatmentInfo}`;
         setLastSpeakableText(textToSpeak);
@@ -1631,7 +1631,7 @@ export default function App() {
                                     let text = `${report.plantName}. ${report.detectionResult}. ${report.explanation || ''}. `;
                                     try {
                                       const tr = typeof report.treatment === 'string' ? JSON.parse(report.treatment) : report.treatment;
-                                      if (tr) text += `${t.organicTreatment}: ${tr.organic}.`;
+                                      if (tr) text += `${t.organicTreatment}: ${tr?.organic || 'N/A'}.`;
                                     } catch(e) {}
                                     speak(text, true);
                                   }}
@@ -1672,7 +1672,7 @@ export default function App() {
                                    {(() => {
                                       try {
                                         const tr = typeof report.treatment === 'string' ? JSON.parse(report.treatment) : report.treatment;
-                                        return tr.organic;
+                                        return tr?.organic || "N/A";
                                       } catch(e) { return "N/A"; }
                                    })()}
                                  </p>
@@ -2197,7 +2197,7 @@ export default function App() {
                                   let text = `${report.plantName}. ${report.detectionResult}. ${report.explanation || ''}. `;
                                   try {
                                     const tr = typeof report.treatment === 'string' ? JSON.parse(report.treatment) : report.treatment;
-                                    if (tr) text += `${t.organicTreatment}: ${tr.organic}. ${t.chemicalTreatment}: ${tr.chemical}.`;
+                                    if (tr) text += `${t.organicTreatment}: ${tr?.organic || 'N/A'}. ${t.chemicalTreatment}: ${tr?.chemical || 'N/A'}.`;
                                   } catch(e) {}
                                   speak(text, true);
                                 }}
@@ -2237,7 +2237,7 @@ export default function App() {
                                  {(() => {
                                     try {
                                       const tr = typeof report.treatment === 'string' ? JSON.parse(report.treatment) : report.treatment;
-                                      return tr.organic;
+                                      return tr?.organic || "N/A";
                                     } catch(e) { return "N/A"; }
                                  })()}
                                </p>
@@ -2250,7 +2250,7 @@ export default function App() {
                                  {(() => {
                                     try {
                                       const tr = typeof report.treatment === 'string' ? JSON.parse(report.treatment) : report.treatment;
-                                      return tr.chemical;
+                                      return tr?.chemical || "N/A";
                                     } catch(e) { return "N/A"; }
                                  })()}
                                </p>
